@@ -18,9 +18,10 @@ interface ChatPanelProps {
   messages: ChatMessage[];
   isLoading: boolean;
   onSendMessage: (text: string) => void;
+  isResume: boolean;
 }
 
-const PRESET_BADGES = [
+const PRESET_BADGES_INSURANCE = [
   "What is the main coverage of this policy?",
   "Does this policy cover motorcycle accidents?",
   "What exclusions apply to vehicle accidents?",
@@ -28,10 +29,19 @@ const PRESET_BADGES = [
   "Show me the reasoning path in the graph."
 ];
 
+const PRESET_BADGES_RESUME = [
+  "What is this candidate's strongest AI experience?",
+  "What GraphRAG-related experience does this resume show?",
+  "What projects did this candidate work on at FPT Software?",
+  "What technologies are connected to Rizlum?",
+  "Is this candidate suitable for an AI Engineer role focused on LLM/RAG systems?"
+];
+
 export const ChatPanel: React.FC<ChatPanelProps> = ({
   messages,
   isLoading,
   onSendMessage,
+  isResume,
 }) => {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -77,9 +87,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               <Compass className="w-6 h-6 animate-spin-slow" />
             </div>
             <div className="space-y-1.5">
-              <h3 className="text-base font-bold text-slate-200">Start an Insurance Inquiry</h3>
+              <h3 className="text-base font-bold text-slate-200">
+                {isResume ? 'Start a Resume Inquiry' : 'Start an Insurance Inquiry'}
+              </h3>
               <p className="text-xs text-slate-400 leading-relaxed">
-                Ask anything about the active policies, coverage clauses, or exclusions. The AI will query the 3D Knowledge Graph and retrieve grounded citations.
+                {isResume
+                  ? "Ask anything about the candidate's skills, experience, projects, or suitability. The AI will query the 3D Knowledge Graph and retrieve grounded citations."
+                  : "Ask anything about the active policies, coverage clauses, or exclusions. The AI will query the 3D Knowledge Graph and retrieve grounded citations."}
               </p>
             </div>
           </div>
@@ -99,10 +113,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         <div className="mb-3.5">
           <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2 flex items-center gap-1">
             <HelpCircle className="w-3.5 h-3.5 text-indigo-400" />
-            Insurance Domain Preset Inquiries (Click to run)
+            {isResume ? 'Resume' : 'Insurance'} Domain Preset Inquiries (Click to run)
           </div>
           <div className="flex flex-wrap gap-1.5">
-            {PRESET_BADGES.map((badge, idx) => (
+            {(isResume ? PRESET_BADGES_RESUME : PRESET_BADGES_INSURANCE).map((badge, idx) => (
               <button
                 key={idx}
                 onClick={() => handleBadgeClick(badge)}
@@ -123,7 +137,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             disabled={isLoading}
-            placeholder="Type your question (e.g. Does John Doe cover motorcycles?)..."
+            placeholder={
+              isResume
+                ? "Type your question (e.g. What GraphRAG experience does this resume show?)..."
+                : "Type your question (e.g. Does John Doe cover motorcycles?)..."
+            }
             className="flex-1 bg-slate-900 border border-slate-800 focus:border-indigo-500/80 focus:ring-1 focus:ring-indigo-500/30 rounded-xl px-4 py-3 text-sm placeholder-slate-600 outline-none text-slate-100 disabled:opacity-60 transition"
           />
           <button

@@ -142,7 +142,7 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
     );
     if (match && fgRef.current) {
       // Find rendered node in forcegraph to get coordinates
-      const renderedNode = fgRef.current.graphData().nodes.find((n: any) => n.id === match.id);
+      const renderedNode = processedData.nodes.find((n: any) => n.id === match.id);
       if (renderedNode) {
         handleNodeClick(renderedNode);
       }
@@ -173,7 +173,7 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
     if (highlightPath.node_ids.length > 0 && fgRef.current) {
       // Find coordinates of nodes in path
       setTimeout(() => {
-        const renderedNodes = fgRef.current.graphData().nodes.filter((n: any) =>
+        const renderedNodes = processedData.nodes.filter((n: any) =>
           highlightPath.node_ids.includes(n.id)
         );
 

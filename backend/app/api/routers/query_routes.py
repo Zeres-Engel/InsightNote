@@ -1,14 +1,18 @@
+from __future__ import annotations
+
 """
 This module contains all query-related routes for the ZeRAG API.
 """
 
 import json
 from typing import Any, Dict, List, Literal, Optional
+
 from fastapi import APIRouter, Depends, HTTPException
-from app.core.base import QueryParam
-from app.api.utils_api import get_combined_auth_dependency
-from app.core.utils import logger
 from pydantic import BaseModel, Field, field_validator
+
+from app.api.utils_api import get_combined_auth_dependency
+from app.core.base import QueryParam
+from app.core.utils import logger
 
 router = APIRouter()
 

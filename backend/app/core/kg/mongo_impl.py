@@ -1,12 +1,15 @@
+from __future__ import annotations
+
+import asyncio
+import configparser
 import os
 import re
 import time
 from dataclasses import dataclass, field
-import numpy as np
-import configparser
-import asyncio
-
 from typing import Any, Union, final
+
+import numpy as np
+import pipmaster as pm
 
 from ..base import (
     BaseGraphStorage,
@@ -16,22 +19,22 @@ from ..base import (
     DocStatus,
     DocStatusStorage,
 )
-from ..utils import logger, compute_mdhash_id
-from ..types import KnowledgeGraph, KnowledgeGraphNode, KnowledgeGraphEdge
 from ..constants import GRAPH_FIELD_SEP
 from ..kg.shared_storage import get_data_init_lock
-
-import pipmaster as pm
+from ..types import KnowledgeGraph, KnowledgeGraphEdge, KnowledgeGraphNode
+from ..utils import compute_mdhash_id, logger
 
 if not pm.is_installed("pymongo"):
     pm.install("pymongo")
 
-from pymongo import AsyncMongoClient  # type: ignore
-from pymongo import UpdateOne  # type: ignore
-from pymongo.asynchronous.database import AsyncDatabase  # type: ignore
+from pymongo import (
+    AsyncMongoClient,  # type: ignore
+    UpdateOne,  # type: ignore
+)
 from pymongo.asynchronous.collection import AsyncCollection  # type: ignore
-from pymongo.operations import SearchIndexModel  # type: ignore
+from pymongo.asynchronous.database import AsyncDatabase  # type: ignore
 from pymongo.errors import PyMongoError  # type: ignore
+from pymongo.operations import SearchIndexModel  # type: ignore
 
 config = configparser.ConfigParser()
 config.read("config.ini", "utf-8")
@@ -2220,7 +2223,11 @@ class MongoVectorDBStorage(BaseVectorStorage):
         return list_data
 
     async def query(
-        self, query: str, top_k: int, score_threshold: float = None, query_embedding: list[float] = None
+        self,
+        query: str,
+        top_k: int,
+        score_threshold: float = None,
+        query_embedding: list[float] = None,
     ) -> list[dict[str, Any]]:
         """Queries the vector database using Atlas Vector Search."""
         if query_embedding is not None:

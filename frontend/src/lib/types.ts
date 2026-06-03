@@ -72,3 +72,30 @@ export interface ChatMessage {
   retrieval_steps?: string[];
   graph_path?: GraphPath;
 }
+
+export interface Notebook {
+  id: string;
+  name: string;
+  source_count: number;
+  status: string;
+}
+
+export interface PipelineStep {
+  name: string;
+  status: 'pending' | 'processing' | 'done' | 'failed_fallback_used';
+}
+
+export interface PipelineJobResponse {
+  job_id: string;
+  status: 'processing' | 'ready' | 'failed';
+  steps: PipelineStep[];
+}
+
+export interface SourceAddResponse {
+  source_id: string;
+  name: string;
+  type: string;
+  status: string;
+  pipeline_job_id?: string;
+}
+

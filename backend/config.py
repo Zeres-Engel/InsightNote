@@ -1,10 +1,12 @@
 import os
-import yaml
 import re
+
+import yaml
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
+
 
 def env_var_constructor(loader, node):
     """
@@ -16,12 +18,16 @@ def env_var_constructor(loader, node):
     if match:
         var_name = match.group("var")
         default_value = match.group("default")
-        return os.getenv(var_name, default_value if default_value is not None else value)
+        return os.getenv(
+            var_name, default_value if default_value is not None else value
+        )
     return value
+
 
 # Add constructor to YAML loader
 yaml.SafeLoader.add_constructor("!env", env_var_constructor)
 yaml.SafeLoader.add_implicit_resolver("!env", re.compile(r"\$\{(.*)\}"), None)
+
 
 class Config:
     def __init__(self, config_path=None):
@@ -30,6 +36,12 @@ class Config:
             config_path = "config/config.yaml"
             if not os.path.exists(config_path):
                 config_path = "config.yaml"
+            if not os.path.exists(config_path):
+                # Try relative to the config.py directory to support running from other directories
+                dir_of_config_py = os.path.dirname(os.path.abspath(__file__))
+                config_path = os.path.join(dir_of_config_py, "config", "config.yaml")
+                if not os.path.exists(config_path):
+                    config_path = os.path.join(dir_of_config_py, "config.yaml")
         if os.path.exists(config_path):
             with open(config_path, "r") as f:
                 self._yaml_config = yaml.safe_load(f)
@@ -45,7 +57,7 @@ class Config:
         self.PORT = int(server.get("port", 8000))
         self.WORKING_DIR = server.get("working_dir", "./rag_storage")
         self.WORKSPACE = server.get("workspace", "default")
-        
+
         # LLM Settings
         llm = self._yaml_config.get("llm", {})
         self.LLM_BINDING = llm.get("binding", "openai")
@@ -53,55 +65,69 @@ class Config:
         self.LLM_API_KEY = llm.get("api_key")
         self.LLM_BASE_URL = llm.get("base_url")
         self.LLM_OPTIONS = llm.get("options", {})
-        
+
         # Embedding Settings
         embedding = self._yaml_config.get("embedding", {})
         self.EMBEDDING_BINDING = embedding.get("binding", "openai")
         self.EMBEDDING_MODEL = embedding.get("model", "text-embedding-3-small")
         self.EMBEDDING_API_KEY = embedding.get("api_key")
         self.EMBEDDING_BASE_URL = embedding.get("base_url")
-        
+
         reranker = self._yaml_config.get("reranker", {})
         self.RERANKER_BINDING = reranker.get("binding", "lollms")
         self.RERANKER_MODEL = reranker.get("model", "")
         self.RERANKER_BASE_URL = reranker.get("base_url")
         self.RERANKER_API_KEY = reranker.get("api_key", self.LLM_API_KEY)
         self.RERANKER_MAX_TOKENS = int(reranker.get("max_tokens", 4096))
-        self.RERANK_SCORE = float(reranker.get("rerank_score", os.getenv("RERANK_SCORE", 0.0)))
-        
+        self.RERANK_SCORE = float(
+            reranker.get("rerank_score", os.getenv("RERANK_SCORE", 0.0))
+        )
+
         # Vector Search (cosine similarity threshold for Qdrant, etc.)
         vector = self._yaml_config.get("vector", {})
-        self.VECTOR_SCORE = float(vector.get("vector_score", os.getenv("VECTOR_SCORE", 0.2)))
-        
+        self.VECTOR_SCORE = float(
+            vector.get("vector_score", os.getenv("VECTOR_SCORE", 0.2))
+        )
+
         # Storage Backends
         storage = self._yaml_config.get("storage", {})
         self.KV_STORAGE = storage.get("kv", "MongoKVStorage")
         self.GRAPH_STORAGE = storage.get("graph", "Neo4jStorage")
         self.VECTOR_STORAGE = storage.get("vector", "QdrantVectorDBStorage")
         self.DOC_STATUS_STORAGE = storage.get("doc_status", "MongoDocStatusStorage")
-        
+
         # --- Infrastructure & Services Deployment Metadata ---
         infrastructure = self._yaml_config.get("infrastructure", {})
-        
+
         # MongoDB Infrastructure
         mongo_infra = infrastructure.get("mongodb", {})
         self.MONGO_IMAGE = mongo_infra.get("image", "mongo:latest")
-        self.MONGO_URI = mongo_infra.get("uri", os.getenv("MONGO_URI", "mongodb://mongodb:27017"))
+        self.MONGO_URI = mongo_infra.get(
+            "uri", os.getenv("MONGO_URI", "mongodb://mongodb:27017")
+        )
         self.MONGO_DATABASE = mongo_infra.get("database", "lightrag")
-        
+
         # Neo4j Infrastructure
         neo4j_infra = infrastructure.get("neo4j", {})
         self.NEO4J_IMAGE = neo4j_infra.get("image", "neo4j:latest")
-        self.NEO4J_URI = neo4j_infra.get("uri", os.getenv("NEO4J_URI", "bolt://neo4j:7687"))
+        self.NEO4J_URI = neo4j_infra.get(
+            "uri", os.getenv("NEO4J_URI", "bolt://neo4j:7687")
+        )
         self.NEO4J_USER = neo4j_infra.get("user", os.getenv("NEO4J_USER", "neo4j"))
-        self.NEO4J_PASSWORD = neo4j_infra.get("password", os.getenv("NEO4J_PASSWORD", "password"))
-        
+        self.NEO4J_PASSWORD = neo4j_infra.get(
+            "password", os.getenv("NEO4J_PASSWORD", "password")
+        )
+
         # Qdrant Infrastructure
         qdrant_infra = infrastructure.get("qdrant", {})
         self.QDRANT_IMAGE = qdrant_infra.get("image", "qdrant/qdrant:latest")
-        self.QDRANT_URL = qdrant_infra.get("url", os.getenv("QDRANT_URL", "http://qdrant:6333"))
-        self.QDRANT_API_KEY = qdrant_infra.get("api_key", os.getenv("QDRANT_API_KEY", ""))
-        
+        self.QDRANT_URL = qdrant_infra.get(
+            "url", os.getenv("QDRANT_URL", "http://qdrant:6333")
+        )
+        self.QDRANT_API_KEY = qdrant_infra.get(
+            "api_key", os.getenv("QDRANT_API_KEY", "")
+        )
+
         # Global API Security
         self.API_KEY = os.getenv("ZERAG_API_KEY", None)
 
@@ -124,11 +150,16 @@ class Config:
 
     def _replace_value(self, value):
         pattern = re.compile(r"\$\{(?P<var>[^:-]+)(?::-(?P<default>.*))?\}")
+
         def replacer(match):
             var_name = match.group("var")
             default_value = match.group("default")
-            return os.getenv(var_name, default_value if default_value is not None else match.group(0))
+            return os.getenv(
+                var_name, default_value if default_value is not None else match.group(0)
+            )
+
         return pattern.sub(replacer, value)
+
 
 # Single instance of config
 config = Config()

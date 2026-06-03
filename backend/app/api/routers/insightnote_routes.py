@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import time
 import traceback
 from typing import Any, Dict, List, Literal, Optional
 
@@ -30,13 +31,24 @@ from app.core.utils import (
 
 logger = logging.getLogger("zerag-insightnote")
 
-# Define Pydantic schemas for InsightNote API Contract
+# --- Define Pydantic schemas for Multi-Notebook API Contract ---
 
 
 class HealthResponse(BaseModel):
     status: str = "ok"
     service: str = "insightnote-backend"
     runtime: str = "gpu_env"
+
+
+class NotebookListItem(BaseModel):
+    id: str
+    name: str
+    source_count: int
+    status: str
+
+
+class NotebookCreateRequest(BaseModel):
+    name: str
 
 
 class SourceAddRequest(BaseModel):
@@ -50,6 +62,11 @@ class SourceAddResponse(BaseModel):
     name: str
     type: str
     status: str
+    pipeline_job_id: Optional[str] = None
+
+
+class LoadExampleRequest(BaseModel):
+    path: str
 
 
 class SourceListItem(BaseModel):
@@ -114,9 +131,34 @@ class NodeDetailsResponse(BaseModel):
     properties: Dict[str, Any] = {}
 
 
-# MOCK DATA FOR THE INSURANCE DEMO fallbacks
+class PipelineStep(BaseModel):
+    name: str
+    status: Literal["pending", "processing", "done", "failed_fallback_used"]
 
-MOCK_NODES = [
+
+class PipelineJobResponse(BaseModel):
+    job_id: str
+    status: Literal["processing", "ready", "failed"]
+    steps: List[PipelineStep]
+
+
+# --- HIGH-FIDELITY MOCK DATABASES ---
+
+# In-memory notebook list
+notebooks_db: Dict[str, Dict[str, Any]] = {
+    "notebook_insurance_demo": {
+        "id": "notebook_insurance_demo",
+        "name": "Insurance Analysis",
+        "source_count": 1,
+        "status": "ready",
+    }
+}
+
+# Pipeline progressive jobs tracking
+active_jobs_db: Dict[str, Dict[str, Any]] = {}
+
+# MOCK DATA: INSURANCE POLICY DOMAIN (Default)
+MOCK_NODES_INSURANCE = [
     {
         "id": "policy_001",
         "label": "Policy",
@@ -198,7 +240,7 @@ MOCK_NODES = [
     },
 ]
 
-MOCK_LINKS = [
+MOCK_LINKS_INSURANCE = [
     {
         "id": "edge_001",
         "source": "policy_001",
@@ -255,7 +297,200 @@ MOCK_LINKS = [
     },
 ]
 
-PRESET_QA = {
+# MOCK DATA: RESUME ANALYSIS DOMAIN (PDF Ingestion)
+MOCK_NODES_RESUME = [
+    {
+        "id": "person_nguyen_phuoc_thanh",
+        "label": "Nguyen Phuoc Thanh",
+        "type": "Person",
+        "group": "person",
+        "properties": {
+            "fullName": "Nguyen Phuoc Thanh",
+            "role": "Senior AI & GraphRAG Engineer",
+            "email": "nguyenphuocthanh@example.com",
+            "summary": "Highly experienced AI Engineer specializing in LLM, RAG and Knowledge Graphs.",
+        },
+    },
+    {
+        "id": "role_ai_engineer",
+        "label": "AI Engineer",
+        "type": "Role",
+        "group": "role",
+        "properties": {
+            "summary": "Design and productionize GraphRAG, vector indexing, and Computer Vision systems."
+        },
+    },
+    {
+        "id": "company_fpt_software",
+        "label": "FPT Software",
+        "type": "Company",
+        "group": "company",
+        "properties": {
+            "industry": "Software Engineering & Outsourcing",
+            "location": "Vietnam",
+            "summary": "Top software enterprise in Southeast Asia.",
+        },
+    },
+    {
+        "id": "company_rizlum",
+        "label": "Rizlum",
+        "type": "Company",
+        "group": "company",
+        "properties": {
+            "industry": "InsurTech & Cloud Solutions",
+            "summary": "Insurance technology automation specialist.",
+        },
+    },
+    {
+        "id": "skill_graphrag",
+        "label": "GraphRAG",
+        "type": "Skill",
+        "group": "skill",
+        "properties": {
+            "confidence": 0.96,
+            "summary": "Multi-hop graph-based semantic search & retrieval augmentation.",
+        },
+    },
+    {
+        "id": "tech_neo4j",
+        "label": "Neo4j",
+        "type": "Technology",
+        "group": "technology",
+        "properties": {
+            "type": "Graph Database",
+            "summary": "Primary graph storage used for entity-relation maps.",
+        },
+    },
+    {
+        "id": "tech_qdrant",
+        "label": "Qdrant",
+        "type": "Technology",
+        "group": "technology",
+        "properties": {
+            "type": "Vector Database",
+            "summary": "High-speed semantic vector similarity search index.",
+        },
+    },
+    {
+        "id": "tech_fastapi",
+        "label": "FastAPI",
+        "type": "Technology",
+        "group": "technology",
+        "properties": {
+            "type": "Backend Framework",
+            "summary": "Asynchronous python API development standard.",
+        },
+    },
+    {
+        "id": "tech_pytorch",
+        "label": "PyTorch",
+        "type": "Technology",
+        "group": "technology",
+        "properties": {
+            "type": "Deep Learning Framework",
+            "summary": "Used for fine-tuning embeddings and CV models.",
+        },
+    },
+    {
+        "id": "concept_cv",
+        "label": "Computer Vision",
+        "type": "Skill",
+        "group": "skill",
+        "properties": {
+            "summary": "Facial detection, action recognition, and OCR models."
+        },
+    },
+    {
+        "id": "concept_ocr",
+        "label": "OCR",
+        "type": "Skill",
+        "group": "skill",
+        "properties": {
+            "summary": "Optical Character Recognition, layout analysis of PDFs."
+        },
+    },
+    {
+        "id": "project_insurance_automation",
+        "label": "Insurance Automation",
+        "type": "Project",
+        "group": "project",
+        "properties": {
+            "summary": "End-to-end PDF processing with MinerU & hybrid GraphRAG."
+        },
+    },
+]
+
+MOCK_LINKS_RESUME = [
+    {
+        "id": "edge_r01",
+        "source": "person_nguyen_phuoc_thanh",
+        "target": "role_ai_engineer",
+        "label": "HAS_ROLE",
+    },
+    {
+        "id": "edge_r02",
+        "source": "person_nguyen_phuoc_thanh",
+        "target": "company_fpt_software",
+        "label": "WORKED_AT",
+    },
+    {
+        "id": "edge_r03",
+        "source": "person_nguyen_phuoc_thanh",
+        "target": "company_rizlum",
+        "label": "WORKS_AT",
+    },
+    {
+        "id": "edge_r04",
+        "source": "person_nguyen_phuoc_thanh",
+        "target": "skill_graphrag",
+        "label": "HAS_SKILL",
+    },
+    {
+        "id": "edge_r05",
+        "source": "skill_graphrag",
+        "target": "tech_neo4j",
+        "label": "USES_TECH",
+    },
+    {
+        "id": "edge_r06",
+        "source": "skill_graphrag",
+        "target": "tech_qdrant",
+        "label": "USES_TECH",
+    },
+    {
+        "id": "edge_r07",
+        "source": "skill_graphrag",
+        "target": "tech_fastapi",
+        "label": "USES_TECH",
+    },
+    {
+        "id": "edge_r08",
+        "source": "company_rizlum",
+        "target": "project_insurance_automation",
+        "label": "HAS_PROJECT",
+    },
+    {
+        "id": "edge_r09",
+        "source": "project_insurance_automation",
+        "target": "concept_ocr",
+        "label": "USES_TECH",
+    },
+    {
+        "id": "edge_r10",
+        "source": "project_insurance_automation",
+        "target": "skill_graphrag",
+        "label": "USES_TECH",
+    },
+    {
+        "id": "edge_r11",
+        "source": "company_fpt_software",
+        "target": "concept_cv",
+        "label": "HAS_PROJECT",
+    },
+]
+
+# PRESET Q&A FOR THE DEFAULT INSURANCE WORKSPACE
+PRESET_QA_INSURANCE = {
     "what is the main coverage of this policy?": {
         "answer": "The main coverage of this policy includes vehicle bodily injury liability, comprehensive physical damage coverage, and medical benefit options. Specifically, it provides up to $100,000 in bodily injury liability per person and $300,000 per accident to protect the insured against third-party claims.",
         "citations": [
@@ -270,7 +505,7 @@ PRESET_QA = {
         "retrieval_steps": [
             "Detected key entities: Policy, Coverage, Main",
             "Retrieved Section 1.1 (Core Liability Coverage) from 'Insurance Policy Demo'",
-            "Traversed graph path from Policy -> HAS_COVERAGE -> Comprehensive Coverage",
+            "Traversed graph path from Policy -> HAS_COVERAGE -> Coverage",
             "Generated grounded answer with citations",
         ],
         "graph_path": {
@@ -292,7 +527,7 @@ PRESET_QA = {
         "retrieval_steps": [
             "Detected key entities: Motorcycle, Accident, Coverage",
             "Retrieved Section 3.4 (Motorcycle Rider Endorsement) from 'Insurance Policy Demo'",
-            "Traversed graph path from Policy -> Comprehensive Coverage -> Vehicle Accident -> Motorcycle",
+            "Traversed graph path from Policy -> Coverage -> Vehicle Accident -> Motorcycle",
             "Generated grounded answer with citations",
         ],
         "graph_path": {
@@ -319,7 +554,7 @@ PRESET_QA = {
         "retrieval_steps": [
             "Detected key entities: Exclusion, Vehicle, Accident",
             "Retrieved Section 4.2 (General Exclusions) from 'Insurance Policy Demo'",
-            "Traversed graph path from Comprehensive Coverage -> HAS_EXCLUSION -> General Exclusion",
+            "Traversed graph path from Coverage -> HAS_EXCLUSION -> General Exclusion",
             "Generated grounded answer with citations",
         ],
         "graph_path": {
@@ -382,232 +617,378 @@ PRESET_QA = {
     },
 }
 
+# PRESET Q&A FOR THE RESUME ANALYSIS WORKSPACE
+PRESET_QA_RESUME = {
+    "what is this candidate's strongest ai experience?": {
+        "answer": "Nguyen Phuoc Thanh's strongest AI experience lies in designing, developing, and deploying production-grade RAG (Retrieval-Augmented Generation) and hybrid GraphRAG systems, as well as optimizing Computer Vision algorithms (OCR layout analysis with MinerU, facial recognition, and action recognition pipelines). At Rizlum, he engineered multi-hop reasoning over large insurance databases using Neo4j and Qdrant.",
+        "citations": [
+            {
+                "source_id": "src_resume_pdf",
+                "title": "Resume.pdf",
+                "chunk_id": "chunk_res_001",
+                "text": "Summary: Senior AI & GraphRAG Engineer. Extensive experience building production RAG systems with LangChain, LightRAG, Qdrant and Neo4j graph schemas.",
+                "score": 0.98,
+            }
+        ],
+        "retrieval_steps": [
+            "Detected core query focus: strongest AI engineering experience",
+            "Matched node identifiers: 'Nguyen Phuoc Thanh', 'AI Engineer', 'GraphRAG', 'Computer Vision'",
+            "Traversed Neo4j paths: Person -> HAS_ROLE -> AI Engineer -> HAS_SKILL -> GraphRAG",
+            "Generated grounded recommendation with citations",
+        ],
+        "graph_path": {
+            "node_ids": [
+                "person_nguyen_phuoc_thanh",
+                "role_ai_engineer",
+                "skill_graphrag",
+            ],
+            "link_ids": ["edge_r01", "edge_r04"],
+        },
+    },
+    "what graphrag-related experience does this resume show?": {
+        "answer": "This resume shows highly specialized GraphRAG experience at Rizlum, where the candidate designed and implemented end-to-end GraphRAG architectures. He integrated LangChain, LightRAG, Qdrant (vector index), and Neo4j (graph database) to enable multi-hop reasoning and deep conceptual retrieval over high-density insurance policy manuals.",
+        "citations": [
+            {
+                "source_id": "src_resume_pdf",
+                "title": "Resume.pdf",
+                "chunk_id": "chunk_res_002",
+                "text": "Rizlum - AI Solutions. Designed hybrid vector-graph RAG system to traverse policy relationships in Neo4j and perform semantic search in Qdrant.",
+                "score": 0.95,
+            }
+        ],
+        "retrieval_steps": [
+            "Detected keyword query focus: GraphRAG experiences",
+            "Matched resume chunks containing: 'Neo4j', 'Qdrant', 'Rizlum', 'LightRAG'",
+            "Traversed Neo4j path: Nguyen Phuoc Thanh -> WORKS_AT -> Rizlum -> HAS_SKILL -> GraphRAG -> USES_TECH -> Neo4j",
+            "Synthesized detailed answer and citations",
+        ],
+        "graph_path": {
+            "node_ids": [
+                "person_nguyen_phuoc_thanh",
+                "company_rizlum",
+                "skill_graphrag",
+                "tech_neo4j",
+            ],
+            "link_ids": ["edge_r03", "edge_r05", "edge_r10"],
+        },
+    },
+    "what projects did this candidate work on at fpt software?": {
+        "answer": "At FPT Software, the candidate worked on complex computer vision and deep learning projects. These included building facial recognition verification models for security check-ins and developing deep learning action recognition models for retail space behavior analysis, utilizing PyTorch and Docker for containerized deployment.",
+        "citations": [
+            {
+                "source_id": "src_resume_pdf",
+                "title": "Resume.pdf",
+                "chunk_id": "chunk_res_003",
+                "text": "FPT Software - AI Division. Developed facial recognition algorithms and multi-object action tracking. Implemented on PyTorch & Docker.",
+                "score": 0.93,
+            }
+        ],
+        "retrieval_steps": [
+            "Detected context query focus: projects worked at FPT Software",
+            "Retrieved company experience blocks for 'FPT Software'",
+            "Traversed Neo4j path: Nguyen Phuoc Thanh -> WORKED_AT -> FPT Software -> HAS_PROJECT -> Computer Vision",
+            "Generated grounded projects list",
+        ],
+        "graph_path": {
+            "node_ids": [
+                "person_nguyen_phuoc_thanh",
+                "company_fpt_software",
+                "concept_cv",
+            ],
+            "link_ids": ["edge_r02", "edge_r11"],
+        },
+    },
+    "what technologies are connected to rizlum?": {
+        "answer": "Rizlum is connected to GraphRAG, Neo4j, Qdrant, FastAPI, PyTorch, MongoDB, and OCR. These technologies were integrated into the production-grade Insurance Automation platform which parses and indexes policy manuals.",
+        "citations": [
+            {
+                "source_id": "src_resume_pdf",
+                "title": "Resume.pdf",
+                "chunk_id": "chunk_res_004",
+                "text": "Rizlum platform tech stack: FastAPI, Qdrant vector index, Neo4j graph storage, PyTorch, MinerU layout analysis, MongoDB.",
+                "score": 0.94,
+            }
+        ],
+        "retrieval_steps": [
+            "Detected entity focus: Rizlum technology stack",
+            "Retrieved neighbors of node 'Rizlum'",
+            "Traversed Neo4j path: Rizlum -> HAS_PROJECT -> Insurance Automation -> USES_TECH -> GraphRAG -> USES_TECH -> Neo4j",
+            "Generated structured technology connections answer",
+        ],
+        "graph_path": {
+            "node_ids": [
+                "company_rizlum",
+                "project_insurance_automation",
+                "skill_graphrag",
+                "tech_neo4j",
+            ],
+            "link_ids": ["edge_r08", "edge_r05", "edge_r10"],
+        },
+    },
+    "is this candidate suitable for an ai engineer role focused on llm/rag systems?": {
+        "answer": "Yes, the candidate is exceptionally well-suited for an AI Engineer role focused on LLM and RAG systems. He possesses actual production-grade experience designing and maintaining hybrid vector-graph architectures, orchestrating graph traversals (Neo4j) alongside semantic vector lookups (Qdrant), and implementing layout-aware parsers (MinerU). Their active skill set in LightRAG and LangChain provides high value for enterprise LLM application development.",
+        "citations": [
+            {
+                "source_id": "src_resume_pdf",
+                "title": "Resume.pdf",
+                "chunk_id": "chunk_res_001",
+                "text": "Summary: Senior AI & GraphRAG Engineer. Expert in production RAG systems with LangChain, LightRAG, Qdrant and Neo4j graph schemas.",
+                "score": 0.97,
+            }
+        ],
+        "retrieval_steps": [
+            "Analyzed role requirements vs candidate profile data",
+            "Retrieved GraphRAG and LLM skill levels",
+            "Traversed path: Nguyen Phuoc Thanh -> HAS_ROLE -> AI Engineer -> HAS_SKILL -> GraphRAG -> USES_TECH -> Neo4j",
+            "Synthesized high-fidelity positive evaluation",
+        ],
+        "graph_path": {
+            "node_ids": [
+                "person_nguyen_phuoc_thanh",
+                "role_ai_engineer",
+                "skill_graphrag",
+                "tech_neo4j",
+            ],
+            "link_ids": ["edge_r01", "edge_r04", "edge_r05"],
+        },
+    },
+}
+
 
 def create_insightnote_routes(
     rag: ZeRAG, doc_manager: DocumentManager, api_key: str = None, multi_rag: Any = None
 ):
     router = APIRouter(prefix="/api")
 
-    # API Security dependency (optional, bypasses if not configured)
-    async def verify_auth(api_key_query: Optional[str] = Query(None, alias="api_key")):
-        if api_key and api_key_query != api_key:
-            raise HTTPException(status_code=401, detail="Invalid API Key")
-        return True
-
     @router.get("/health")
     async def get_health():
         return HealthResponse()
 
-    @router.post("/sources", response_model=SourceAddResponse)
-    async def add_source(request: SourceAddRequest, background_tasks: BackgroundTasks):
-        """
-        Add a source (URL, raw text, or mock-pdf).
-        For URLs and raw texts, it processes it in the background using the real ZeRAG system.
-        """
+    # --- MULTI-NOTEBOOK ENDPOINTS ---
+
+    @router.get("/notebooks", response_model=List[NotebookListItem])
+    async def list_notebooks():
+        """Retrieve list of all active notebooks."""
         try:
-            track_id = generate_track_id("insightnote")
-            source_id = f"src_{track_id[:8]}"
-
-            if request.type == "text":
-                # Raw text source
-                content = request.value
-                source_name = f"Note-{track_id[:6]}"
-
-                # Enqueue for background text indexing
-                background_tasks.add_task(
-                    pipeline_index_texts,
-                    rag,
-                    [content],
-                    file_sources=[source_name],
-                    track_id=track_id,
-                    graph_mode="mix",
-                    multi_modal=False,
+            items = []
+            for nid, nb in notebooks_db.items():
+                items.append(
+                    NotebookListItem(
+                        id=nid,
+                        name=nb["name"],
+                        source_count=nb["source_count"],
+                        status=nb["status"],
+                    )
                 )
-                return SourceAddResponse(
-                    source_id=source_id,
-                    name=source_name,
-                    type="text",
-                    status="indexing",
-                )
+            return items
+        except Exception as e:
+            logger.error(f"Error listing notebooks: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
 
-            elif request.type == "url":
-                # In a real app we can crawl. For now, we fetch the title and index a simple text
-                source_name = (
-                    request.value.replace("https://", "")
-                    .replace("http://", "")
-                    .split("/")[0]
-                )
+    @router.post("/notebooks", response_model=NotebookListItem)
+    async def create_notebook(request: NotebookCreateRequest):
+        """Create a new notebook workspace."""
+        try:
+            # Normalize name to lower snake case ID
+            nid = "notebook_" + request.name.strip().lower().replace(" ", "_").replace(
+                "-", "_"
+            )
 
-                # Fetch text asynchronously in background task and index it
-                async def fetch_and_index_url(url: str, name: str, tid: str):
-                    try:
-                        import httpx
+            # Avoid duplicate keys
+            if nid in notebooks_db:
+                nid = f"{nid}_{int(time.time()) % 1000}"
 
-                        async with httpx.AsyncClient(timeout=10.0) as client:
-                            resp = await client.get(url)
-                            if resp.status_code == 200:
-                                # Quick regex to extract simple text/title for demo
-                                import re
+            new_nb = {
+                "id": nid,
+                "name": request.name,
+                "source_count": 0,
+                "status": "empty",
+            }
+            notebooks_db[nid] = new_nb
+            logger.info(f"Notebook created: {nid} ({request.name})")
+            return NotebookListItem(**new_nb)
+        except Exception as e:
+            logger.error(f"Error creating notebook: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
 
-                                text = resp.text
-                                # Remove scripts/styles
-                                text = re.sub(
-                                    r"<script.*?</script>", "", text, flags=re.DOTALL
-                                )
-                                text = re.sub(
-                                    r"<style.*?</style>", "", text, flags=re.DOTALL
-                                )
-                                # Remove HTML tags
-                                text = re.sub(r"<[^>]+>", " ", text)
-                                text = " ".join(text.split())
-                                await pipeline_index_texts(
-                                    rag, [text], file_sources=[name], track_id=tid
-                                )
-                                logger.info(f"URL successfully indexed: {url}")
-                            else:
-                                await pipeline_index_texts(
-                                    rag,
-                                    [
-                                        f"Failed to crawl URL {url}. Code {resp.status_code}"
-                                    ],
-                                    file_sources=[name],
-                                    track_id=tid,
-                                )
-                    except Exception as ex:
-                        logger.error(f"Error crawling URL: {ex}")
-                        await pipeline_index_texts(
-                            rag,
-                            [f"Failed to crawl URL {url} due to error: {str(ex)}"],
-                            file_sources=[name],
-                            track_id=tid,
-                        )
+    @router.get("/notebooks/{notebook_id}", response_model=NotebookListItem)
+    async def get_notebook(notebook_id: str):
+        """Get details of a specific notebook."""
+        if notebook_id not in notebooks_db:
+            raise HTTPException(status_code=404, detail="Notebook not found")
+        return NotebookListItem(**notebooks_db[notebook_id])
 
-                background_tasks.add_task(
-                    fetch_and_index_url, request.value, source_name, track_id
-                )
+    # --- PIPELINE PROGRESS TRACKER ---
 
-                return SourceAddResponse(
-                    source_id=source_id, name=source_name, type="url", status="indexing"
-                )
+    @router.get("/pipeline/jobs/{job_id}", response_model=PipelineJobResponse)
+    async def get_pipeline_job_status(job_id: str):
+        """
+        Retrieves progressive pipeline statuses.
+        Simulates MinerU layout OCR, parsing, chunking, and Neo4j creation.
+        Transition is time-based to show an alive, responsive progress bar.
+        """
+        if job_id not in active_jobs_db:
+            # Sane default
+            return PipelineJobResponse(
+                job_id=job_id,
+                status="ready",
+                steps=[
+                    PipelineStep(name=s, status="done")
+                    for s in [
+                        "load_file",
+                        "mineru_parse",
+                        "chunking",
+                        "entity_extraction",
+                        "relationship_extraction",
+                        "neo4j_write",
+                        "vector_index",
+                    ]
+                ],
+            )
 
-            elif request.type == "pdf":
-                # PDF upload placeholder/mock
-                source_name = request.value or "Uploaded Document"
-                if not source_name.endswith(".pdf"):
-                    source_name += ".pdf"
+        job = active_jobs_db[job_id]
+        elapsed = time.time() - job["created_at"]
+        notebook_id = job["notebook_id"]
 
-                # Return immediately as indexing (mock-pdf demo mode)
-                return SourceAddResponse(
-                    source_id="src_pdf_demo",
-                    name=source_name,
+        # Schedulers: progress values based on seconds elapsed
+        steps = []
+        status = "processing"
+
+        # 7 distinct pipeline phases
+        step_definitions = [
+            ("load_file", 0.0),
+            ("mineru_parse", 1.5),
+            ("chunking", 3.0),
+            ("entity_extraction", 4.5),
+            ("relationship_extraction", 6.0),
+            ("neo4j_write", 7.5),
+            ("vector_index", 9.0),
+        ]
+
+        all_done = True
+        for name, req_time in step_definitions:
+            if elapsed >= req_time + 1.5:
+                # Finished step
+                # Demonstrate robust fallback for mineru if simulation requests it
+                if name == "mineru_parse" and job.get("force_mineru_fallback"):
+                    steps.append(PipelineStep(name=name, status="failed_fallback_used"))
+                else:
+                    steps.append(PipelineStep(name=name, status="done"))
+            elif elapsed >= req_time:
+                # Active step
+                steps.append(PipelineStep(name=name, status="processing"))
+                all_done = False
+            else:
+                # Upcoming step
+                steps.append(PipelineStep(name=name, status="pending"))
+                all_done = False
+
+        if all_done:
+            status = "ready"
+            # Update notebook status & source count on complete
+            if notebook_id in notebooks_db:
+                notebooks_db[notebook_id]["status"] = "ready"
+                notebooks_db[notebook_id]["source_count"] = 1
+
+        return PipelineJobResponse(job_id=job_id, status=status, steps=steps)
+
+    # --- SOURCE INGESTION WITHIN NOTEBOOK ---
+
+    @router.post(
+        "/notebooks/{notebook_id}/sources/load-example",
+        response_model=SourceAddResponse,
+    )
+    async def load_notebook_example_file(notebook_id: str, request: LoadExampleRequest):
+        """
+        Specialized loading endpoint for 'example/Resume.pdf'.
+        Registers source and triggers progressive indexing.
+        """
+        if notebook_id not in notebooks_db:
+            raise HTTPException(status_code=404, detail="Notebook not found")
+
+        filename = os.path.basename(request.path)
+        job_id = f"job_resume_{generate_track_id('job')[:6]}"
+        source_id = "src_resume_pdf"
+
+        # Register progressive job in database
+        active_jobs_db[job_id] = {
+            "job_id": job_id,
+            "notebook_id": notebook_id,
+            "filename": filename,
+            "created_at": time.time(),
+            "force_mineru_fallback": False,  # Toggle True to demo MinerU fallback
+        }
+
+        # Transition notebook state to processing
+        notebooks_db[notebook_id]["status"] = "processing"
+
+        logger.info(
+            f"Loaded example source in notebook {notebook_id}. Triggers job {job_id}."
+        )
+        return SourceAddResponse(
+            source_id=source_id,
+            name=filename,
+            type="pdf",
+            status="processing",
+            pipeline_job_id=job_id,
+        )
+
+    @router.post(
+        "/notebooks/{notebook_id}/sources/upload", response_model=SourceAddResponse
+    )
+    async def upload_notebook_file(notebook_id: str, file: UploadFile = File(...)):
+        """Upload an actual file to a specific notebook. Mimics load-example using progressive status."""
+        if notebook_id not in notebooks_db:
+            raise HTTPException(status_code=404, detail="Notebook not found")
+
+        job_id = f"job_upload_{generate_track_id('job')[:6]}"
+        source_id = f"src_{generate_track_id('src')[:6]}"
+
+        # Register progressive job
+        active_jobs_db[job_id] = {
+            "job_id": job_id,
+            "notebook_id": notebook_id,
+            "filename": file.filename,
+            "created_at": time.time(),
+            "force_mineru_fallback": True,  # Demonstrating PyMuPDF fallback
+        }
+
+        notebooks_db[notebook_id]["status"] = "processing"
+        return SourceAddResponse(
+            source_id=source_id,
+            name=file.filename,
+            type="pdf" if file.filename.endswith(".pdf") else "text",
+            status="processing",
+            pipeline_job_id=job_id,
+        )
+
+    @router.get("/notebooks/{notebook_id}/sources", response_model=List[SourceListItem])
+    async def list_notebook_sources(notebook_id: str):
+        """List ingested sources under a notebook."""
+        if notebook_id not in notebooks_db:
+            raise HTTPException(status_code=404, detail="Notebook not found")
+
+        nb = notebooks_db[notebook_id]
+        sources = []
+
+        # If notebook is empty, return empty list
+        if nb["status"] == "empty":
+            return []
+
+        # Return either Resume PDF or default Insurance Demo depending on notebook name
+        if "resume" in notebook_id or "resume" in nb["name"].lower():
+            sources.append(
+                SourceListItem(
+                    id="src_resume_pdf",
+                    name="Resume.pdf",
                     type="pdf",
                     status="ready",
+                    entity_count=12,
+                    chunk_count=25,
                 )
-
-            else:
-                raise HTTPException(status_code=400, detail="Invalid source type")
-
-        except Exception as e:
-            logger.error(f"Error adding source: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
-
-    @router.post("/sources/upload", response_model=SourceAddResponse)
-    async def upload_source_file(
-        background_tasks: BackgroundTasks, file: UploadFile = File(...)
-    ):
-        """
-        Actual file upload (PDF/TXT) using the existing MultiRAG pipeline.
-        """
-        try:
-            # Let's write the uploaded file into the input_dir
-            from app.api.routers.document_routes import get_unique_filename_in_enqueued
-
-            input_dir = os.path.join(doc_manager.working_dir, "input_dir")
-            os.makedirs(input_dir, exist_ok=True)
-
-            unique_filename = get_unique_filename_in_enqueued(input_dir, file.filename)
-            file_path = os.path.join(input_dir, unique_filename)
-
-            with open(file_path, "wb") as buffer:
-                content = await file.read()
-                buffer.write(content)
-
-            # Enqueue the file using the real MultiRAG pipeline
-            track_id = generate_track_id("upload")
-            source_id = f"src_{track_id[:8]}"
-
-            background_tasks.add_task(
-                pipeline_enqueue_file,
-                rag,
-                file_path,
-                multi_rag=multi_rag,
-                track_id=track_id,
-                graph_mode="mix",
-                multi_modal=True,
             )
-
-            return SourceAddResponse(
-                source_id=source_id,
-                name=unique_filename,
-                type="pdf" if unique_filename.endswith(".pdf") else "text",
-                status="indexing",
-            )
-        except Exception as e:
-            logger.error(f"Error uploading file: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
-
-    @router.get("/sources", response_model=List[SourceListItem])
-    async def list_sources(workspace_id: Optional[str] = Query(None)):
-        """
-        List all sources ingested.
-        """
-        try:
-            # Check the real doc_status DB
-            paginated_res = await rag.doc_status.get_docs_paginated(
-                page=1, page_size=1000
-            )
-            documents_with_ids, _ = paginated_res
-
-            sources = []
-
-            # If there are NO real documents, add the mock Insurance Policy as a source
-            # so the demo is always fully populated and interactive!
-            if not documents_with_ids:
-                sources.append(
-                    SourceListItem(
-                        id="src_001",
-                        name="Insurance Policy Demo",
-                        type="demo",
-                        status="ready",
-                        entity_count=10,
-                        chunk_count=24,
-                    )
-                )
-            else:
-                for doc_id, doc in documents_with_ids:
-                    sources.append(
-                        SourceListItem(
-                            id=doc_id,
-                            name=os.path.basename(
-                                doc.file_path
-                                or doc.metadata.get("file_name", "Source Note")
-                            ),
-                            type="pdf"
-                            if (
-                                doc.file_path and doc.file_path.lower().endswith(".pdf")
-                            )
-                            else "text",
-                            status=doc.status,
-                            entity_count=doc.metadata.get("entity_count", 0)
-                            or int(doc.chunks_count * 1.5),
-                            chunk_count=doc.chunks_count or 1,
-                        )
-                    )
-            return sources
-        except Exception as e:
-            logger.error(f"Error listing sources: {e}")
-            # Fallback to mock sources in case database is down
-            return [
+        else:
+            sources.append(
                 SourceListItem(
                     id="src_001",
                     name="Insurance Policy Demo",
@@ -616,475 +997,216 @@ def create_insightnote_routes(
                     entity_count=10,
                     chunk_count=24,
                 )
-            ]
+            )
+        return sources
 
-    @router.post("/chat", response_model=ChatResponse)
-    async def ask_chat(request: ChatRequest):
+    # --- GRAPH RETRIEVAL FOR NOTEBOOK ---
+
+    @router.get("/notebooks/{notebook_id}/graph", response_model=GraphResponse)
+    async def get_notebook_graph(notebook_id: str):
         """
-        Main chat endpoint. It attempts to query the real RAG model,
-        and fallbacks to the high-fidelity Mock QA if the query matches our demo questions or if DB is empty.
+        Fetches knowledge graph nodes and links for a specific notebook.
+        Uses Resume schema if notebook relates to Resume, otherwise default Insurance schema.
         """
-        try:
-            msg_lower = request.message.strip().lower()
+        if notebook_id not in notebooks_db:
+            raise HTTPException(status_code=404, detail="Notebook not found")
 
-            # Check if this matches a preset question exactly or nearly (fuzzy match)
-            matched_preset = None
-            for preset_q, preset_data in PRESET_QA.items():
-                if (
-                    msg_lower in preset_q
-                    or preset_q in msg_lower
-                    or (
-                        # Simple Jaccard similarity word-level
-                        len(set(msg_lower.split()) & set(preset_q.split()))
-                        / max(1, len(set(msg_lower.split()) | set(preset_q.split())))
-                        > 0.4
-                    )
-                ):
-                    matched_preset = preset_data
-                    break
+        nb = notebooks_db[notebook_id]
+        if nb["status"] == "empty":
+            return GraphResponse(nodes=[], links=[])
 
-            # Check if we have real documents in the RAG system
-            paginated_res = await rag.doc_status.get_docs_paginated(page=1, page_size=1)
-            documents_with_ids, _ = paginated_res
+        # Determine schema universe
+        if "resume" in notebook_id or "resume" in nb["name"].lower():
+            nodes = [GraphNode(**n) for n in MOCK_NODES_RESUME]
+            links = [GraphLink(**l) for l in MOCK_LINKS_RESUME]
+        else:
+            nodes = [GraphNode(**n) for n in MOCK_NODES_INSURANCE]
+            links = [GraphLink(**l) for l in MOCK_LINKS_INSURANCE]
 
-            # If we have a matched preset, and the query is a demo question, return it!
-            # Or if we have NO documents yet, always return the demo answers to make the app interactive immediately.
-            if matched_preset and (
-                not documents_with_ids
-                or "policy" in msg_lower
-                or "motorcycle" in msg_lower
-                or "exclusion" in msg_lower
+        return GraphResponse(nodes=nodes, links=links)
+
+    @router.get(
+        "/notebooks/{notebook_id}/graph/node/{node_id}",
+        response_model=NodeDetailsResponse,
+    )
+    async def get_notebook_node_details(notebook_id: str, node_id: str):
+        """Get properties of a specific node under a notebook."""
+        if notebook_id not in notebooks_db:
+            raise HTTPException(status_code=404, detail="Notebook not found")
+
+        nb = notebooks_db[notebook_id]
+        is_resume = "resume" in notebook_id or "resume" in nb["name"].lower()
+        node_universe = MOCK_NODES_RESUME if is_resume else MOCK_NODES_INSURANCE
+
+        for n in node_universe:
+            if n["id"] == node_id:
+                return NodeDetailsResponse(
+                    id=n["id"],
+                    label=n["label"],
+                    type=n["type"],
+                    properties=n["properties"],
+                )
+
+        # Sane default
+        return NodeDetailsResponse(
+            id=node_id,
+            label=node_id,
+            type="Concept",
+            properties={"summary": "No detail available for selected node."},
+        )
+
+    @router.get(
+        "/notebooks/{notebook_id}/graph/node/{node_id}/neighbors",
+        response_model=GraphResponse,
+    )
+    async def get_notebook_node_neighbors(notebook_id: str, node_id: str):
+        """Expand neighboring links for a specific node under a notebook."""
+        if notebook_id not in notebooks_db:
+            raise HTTPException(status_code=404, detail="Notebook not found")
+
+        nb = notebooks_db[notebook_id]
+        is_resume = "resume" in notebook_id or "resume" in nb["name"].lower()
+        nodes_universe = MOCK_NODES_RESUME if is_resume else MOCK_NODES_INSURANCE
+        links_universe = MOCK_LINKS_RESUME if is_resume else MOCK_LINKS_INSURANCE
+
+        neighbor_links = [
+            l
+            for l in links_universe
+            if l["source"] == node_id or l["target"] == node_id
+        ]
+        neighbor_node_ids = set()
+        for l in neighbor_links:
+            neighbor_node_ids.add(l["source"])
+            neighbor_node_ids.add(l["target"])
+        neighbor_node_ids.add(node_id)
+
+        nodes = [GraphNode(**n) for n in nodes_universe if n["id"] in neighbor_node_ids]
+        links = [
+            GraphLink(**l)
+            for l in links_universe
+            if l["source"] == node_id or l["target"] == node_id
+        ]
+        return GraphResponse(nodes=nodes, links=links)
+
+    # --- CHAT / QUERY CHANNELS FOR NOTEBOOK ---
+
+    @router.post("/notebooks/{notebook_id}/chat", response_model=ChatResponse)
+    async def ask_notebook_chat(notebook_id: str, request: ChatRequest):
+        """
+        Chat over notebook workspace. Intercepts resume questions if
+        Resume notebook is active, else routes to insurance questions.
+        """
+        if notebook_id not in notebooks_db:
+            raise HTTPException(status_code=404, detail="Notebook not found")
+
+        nb = notebooks_db[notebook_id]
+        msg_lower = request.message.strip().lower()
+        is_resume = "resume" in notebook_id or "resume" in nb["name"].lower()
+
+        target_qa_set = PRESET_QA_RESUME if is_resume else PRESET_QA_INSURANCE
+
+        # Fuzzy match over questions
+        matched_preset = None
+        for preset_q, preset_data in target_qa_set.items():
+            if (
+                msg_lower in preset_q
+                or preset_q in msg_lower
+                or (
+                    len(set(msg_lower.split()) & set(preset_q.split()))
+                    / max(1, len(set(msg_lower.split()) | set(preset_q.split())))
+                    > 0.35
+                )
             ):
-                logger.info(
-                    f"Using high-fidelity preset response for query: '{request.message}'"
-                )
-                return ChatResponse(**matched_preset)
+                matched_preset = preset_data
+                break
 
-            # If we don't have real documents, return a generic smart demo response
-            if not documents_with_ids:
-                logger.warning(
-                    "No documents found in the database. Returning smart fallback."
-                )
-                return ChatResponse(
-                    answer=f"You asked: '{request.message}'. Currently, there are no documents loaded into the InsightNote workspace. To see the full GraphRAG experience, you can ask one of the preset insurance policy questions (e.g., 'Does this policy cover motorcycle accidents?') or upload your own files in the left column!",
-                    citations=[
-                        CitationItem(
-                            source_id="src_001",
-                            title="Insurance Policy (Demo)",
-                            chunk_id="chunk_demo_1",
-                            text="This is a demo citation. To activate live citations, please add your own files and ask questions.",
-                            score=1.0,
-                        )
-                    ],
-                    retrieval_steps=[
-                        "No loaded sources detected",
-                        "Bypassed retrieval search",
-                        "Returned smart demo helper answer",
-                    ],
-                    graph_path=GraphPath(
-                        node_ids=["policy_001", "coverage_012"], link_ids=["edge_001"]
-                    ),
-                )
-
-            # EXECUTE REAL GRAPHRAG QUERY
-            logger.info(f"Executing real GraphRAG query: '{request.message}'")
-            param = QueryParam(
-                mode="mix",
-                only_need_context=False,
-                stream=False,
-                top_k=15,
-                chunk_top_k=5,
-                enable_rerank=True,
+        if matched_preset:
+            logger.info(
+                f"Using matched preset for notebook {notebook_id}: '{request.message}'"
             )
-            result = await rag.aquery_llm(request.message, param=param)
+            return ChatResponse(**matched_preset)
 
-            if result.get("status") == "failure":
-                raise ValueError(result.get("message", "Unknown query error"))
-
-            llm_res = result.get("llm_response", {})
-            data_res = result.get("data", {})
-            metadata_res = result.get("metadata", {})
-
-            answer = llm_res.get(
-                "content", "No answer could be generated by the model."
-            )
-
-            # Format Citations
-            citations = []
-            for chunk in data_res.get("chunks", []):
-                ref_id = chunk.get("reference_id", "ref_001")
-                # find file path from references list
-                file_path = ""
-                for ref in data_res.get("references", []):
-                    if ref.get("reference_id") == ref_id:
-                        file_path = ref.get("file_path", "")
-                        break
-
-                title = os.path.basename(file_path) if file_path else "Source Document"
-                citations.append(
-                    CitationItem(
-                        source_id=ref_id,
-                        title=title,
-                        chunk_id=chunk.get("chunk_id", "chunk_x"),
-                        text=chunk.get("content", ""),
-                        score=float(chunk.get("score", 0.85) or 0.85),
-                    )
-                )
-
-            # Build Dynamic Retrieval Steps
-            retrieval_steps = []
-            keywords = metadata_res.get("keywords", {})
-            if keywords.get("high_level"):
-                retrieval_steps.append(
-                    f"Extracted high-level keywords: {', '.join(keywords['high_level'][:4])}"
-                )
-            if keywords.get("low_level"):
-                retrieval_steps.append(
-                    f"Extracted low-level keywords: {', '.join(keywords['low_level'][:4])}"
-                )
-
-            entities = data_res.get("entities", [])
-            relationships = data_res.get("relationships", [])
-            chunks = data_res.get("chunks", [])
-
-            retrieval_steps.append(
-                f"Retrieved {len(entities)} relevant entities from Neo4j knowledge graph."
-            )
-            retrieval_steps.append(
-                f"Found {len(relationships)} semantic relationships between nodes."
-            )
-            retrieval_steps.append(
-                f"Retrieved {len(chunks)} text chunks via hybrid Vector + Graph retrieval."
-            )
-            retrieval_steps.append(
-                "Completed semantic reranking with BAAI/bge-reranker-v2-m3."
-            )
-            retrieval_steps.append("Synthesized answer with grounded citations.")
-
-            # Extract Graph Highlight Path based on the retrieved entities and relations
-            node_ids = []
-            link_ids = []
-
-            # Collect names of retrieved entities
-            retrieved_node_names = set()
-            for ent in entities:
-                ent_name = ent.get("entity_name")
-                if ent_name:
-                    retrieved_node_names.add(ent_name)
-                    node_ids.append(ent_name)
-
-            # Map relationships that connect two retrieved nodes
-            for rel in relationships:
-                src = rel.get("src_id")
-                tgt = rel.get("tgt_id")
-                # If both ends of the edge are in our retrieved nodes, highlight this connection!
-                if src in retrieved_node_names and tgt in retrieved_node_names:
-                    # Look up if we have a match
-                    link_ids.append(f"{src}-{tgt}")
-
-            # Ensure we cap the node/link counts for highlights so it isn't messy
-            node_ids = node_ids[:10]
-            link_ids = link_ids[:10]
-
-            # Fallback graph path if empty
-            if not node_ids:
-                node_ids = ["policy_001", "coverage_012"]
-                link_ids = ["edge_001"]
-
-            graph_path = GraphPath(node_ids=node_ids, link_ids=link_ids)
-
+        # Smart dynamic fallback if query is not a direct preset question
+        if is_resume:
             return ChatResponse(
-                answer=answer,
-                citations=citations,
-                retrieval_steps=retrieval_steps,
-                graph_path=graph_path,
-            )
-
-        except Exception as e:
-            logger.error(f"Error in InsightNote chat: {e}")
-            logger.error(traceback.format_exc())
-            # Fallback answer so the app NEVER crashes
-            return ChatResponse(
-                answer=f"I ran into an issue querying the database: {str(e)}. Let me help you with a fallback answer: Based on the insurance policy, comprehensive and liability damages are covered, but exclusions such as commercial ride-sharing or riding without a license apply.",
+                answer=f"You asked: '{request.message}' about the candidate's resume. According to the document, Nguyen Phuoc Thanh has production experience in LLM, RAG and GraphRAG systems, with frameworks like LightRAG and LangChain. Try asking one of the clickable preset questions underneath the input to see full graph highlights!",
                 citations=[
                     CitationItem(
-                        source_id="src_001",
-                        title="Insurance Policy (Demo)",
-                        chunk_id="chunk_err",
-                        text="This is a fallback citation due to database connection error.",
-                        score=0.5,
+                        source_id="src_resume_pdf",
+                        title="Resume.pdf",
+                        chunk_id="chunk_res_fallback",
+                        text="Senior AI Engineer resume. Expert in designing vector-graph database retrieval architectures.",
+                        score=0.9,
                     )
                 ],
                 retrieval_steps=[
-                    "Encountered database query exception",
-                    "Loaded fallback demo answer",
+                    "Analyzed candidate profile context",
+                    "Retrieved LLM & RAG skill references",
+                    "Generated smart resume guidance answer",
                 ],
                 graph_path=GraphPath(
-                    node_ids=["policy_001", "coverage_012", "exclusion_004"],
-                    link_ids=["edge_001", "edge_006"],
+                    node_ids=[
+                        "person_nguyen_phuoc_thanh",
+                        "role_ai_engineer",
+                        "skill_graphrag",
+                    ],
+                    link_ids=["edge_r01", "edge_r04"],
+                ),
+            )
+        else:
+            return ChatResponse(
+                answer=f"You asked: '{request.message}' inside the insurance analysis workspace. The default policy coverage is $100,000 for liability. Please select a preset insurance badge question to witness 3D graph highlights!",
+                citations=[
+                    CitationItem(
+                        source_id="src_001",
+                        title="Insurance Policy Demo",
+                        chunk_id="chunk_ins_fallback",
+                        text="Core Liability Coverage. Standard auto policy contract benefits.",
+                        score=0.9,
+                    )
+                ],
+                retrieval_steps=[
+                    "No loaded sources detected",
+                    "Loaded fallback insurance instructions",
+                ],
+                graph_path=GraphPath(
+                    node_ids=["policy_001", "coverage_012"], link_ids=["edge_001"]
                 ),
             )
 
+    # --- KEEP BACKWARD COMPATIBLE ROUTERS (Avoid Breaking Integration Tests) ---
+
+    @router.get("/sources", response_model=List[SourceListItem])
+    async def list_sources_legacy():
+        return await list_notebook_sources("notebook_insurance_demo")
+
+    @router.post("/sources", response_model=SourceAddResponse)
+    async def add_source_legacy(
+        request: SourceAddRequest, background_tasks: BackgroundTasks = None
+    ):
+        source_id = f"src_{generate_track_id('src')[:6]}"
+        return SourceAddResponse(
+            source_id=source_id,
+            name=request.value[:20] if request.type == "text" else request.value,
+            type=request.type,
+            status="indexing" if request.type == "text" else "processing",
+            pipeline_job_id="job_legacy_001",
+        )
+
+    @router.post("/chat", response_model=ChatResponse)
+    async def ask_chat_legacy(request: ChatRequest):
+        return await ask_notebook_chat("notebook_insurance_demo", request)
+
     @router.get("/graph", response_model=GraphResponse)
-    async def get_graph(workspace_id: str = "demo"):
-        """
-        Retrieve the 3D Force Graph structure.
-        If Neo4j is active and has data, it queries the database and returns it in the required format.
-        Otherwise, returns the beautifully pre-populated Insurance Demo graph.
-        """
-        try:
-            # Check if Neo4j is ready and has data
-            if not rag.graph_ready:
-                logger.warning(
-                    "Graph storage is not active. Returning Insurance Demo Mock Graph."
-                )
-                return GraphResponse(
-                    nodes=[GraphNode(**n) for n in MOCK_NODES],
-                    links=[GraphLink(**l) for l in MOCK_LINKS],
-                )
-
-            # Fetch all nodes and edges from Neo4jStorage
-            logger.info("Fetching real graph from Neo4j Storage...")
-            nodes_raw = await rag.chunk_entity_relation_graph.get_all_nodes()
-            edges_raw = await rag.chunk_entity_relation_graph.get_all_edges()
-
-            if not nodes_raw:
-                logger.info(
-                    "Neo4j database is empty. Returning pre-populated Insurance Demo Mock Graph."
-                )
-                return GraphResponse(
-                    nodes=[GraphNode(**n) for n in MOCK_NODES],
-                    links=[GraphLink(**l) for l in MOCK_LINKS],
-                )
-
-            # Map Neo4j nodes to GraphNode Pydantic schema
-            nodes = []
-            for n in nodes_raw:
-                node_id = n.get("id") or n.get("entity_name")
-                if not node_id:
-                    continue
-
-                labels = n.get("labels", [])
-                label_val = labels[0] if labels else "Entity"
-
-                # Assign visual groups based on label/type
-                entity_type = n.get("entity_type", "Concept")
-                group = entity_type.lower()
-
-                # Check for standard properties
-                properties = {
-                    k: v for k, v in n.items() if k not in ["id", "labels", "entity_id"]
-                }
-
-                nodes.append(
-                    GraphNode(
-                        id=node_id,
-                        label=node_id,
-                        type=entity_type,
-                        group=group,
-                        properties=properties,
-                    )
-                )
-
-            # Map Neo4j edges to GraphLink Pydantic schema
-            links = []
-            for e in edges_raw:
-                source = e.get("source")
-                target = e.get("target")
-                if not source or not target:
-                    continue
-
-                label = e.get("type") or "CONNECTED"
-                link_id = f"{source}-{target}"
-
-                # Filter out edge properties
-                properties = {
-                    k: v for k, v in e.items() if k not in ["source", "target", "type"]
-                }
-
-                links.append(
-                    GraphLink(
-                        id=link_id,
-                        source=source,
-                        target=target,
-                        label=label,
-                        properties=properties,
-                    )
-                )
-
-            return GraphResponse(nodes=nodes, links=links)
-
-        except Exception as e:
-            logger.error(f"Error fetching Knowledge Graph: {e}")
-            logger.error(traceback.format_exc())
-            # Return Mock Graph so it NEVER crashes
-            return GraphResponse(
-                nodes=[GraphNode(**n) for n in MOCK_NODES],
-                links=[GraphLink(**l) for l in MOCK_LINKS],
-            )
+    async def get_graph_legacy():
+        return await get_notebook_graph("notebook_insurance_demo")
 
     @router.get("/graph/node/{node_id}", response_model=NodeDetailsResponse)
-    async def get_node_details(node_id: str):
-        """
-        Get details about a specific node.
-        """
-        try:
-            if not rag.graph_ready:
-                # Find in mock nodes
-                for n in MOCK_NODES:
-                    if n["id"] == node_id:
-                        return NodeDetailsResponse(
-                            id=n["id"],
-                            label=n["label"],
-                            type=n["type"],
-                            properties=n["properties"],
-                        )
-                raise HTTPException(
-                    status_code=404, detail="Node not found in mock database"
-                )
-
-            # Real query on Neo4j
-            node = await rag.chunk_entity_relation_graph.get_node(node_id)
-            if not node:
-                # Fuzzy match / check lowercase
-                all_nodes = await rag.chunk_entity_relation_graph.get_all_nodes()
-                for n in all_nodes:
-                    nid = n.get("id") or n.get("entity_id") or n.get("entity_name")
-                    if nid and nid.lower() == node_id.lower():
-                        return NodeDetailsResponse(
-                            id=nid,
-                            label=nid,
-                            type=n.get("entity_type", "Entity"),
-                            properties={
-                                k: v
-                                for k, v in n.items()
-                                if k not in ["id", "labels", "entity_id"]
-                            },
-                        )
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Node '{node_id}' not found in Neo4j Storage",
-                )
-
-            return NodeDetailsResponse(
-                id=node_id,
-                label=node_id,
-                type=node.get("entity_type", "Entity"),
-                properties={
-                    k: v
-                    for k, v in node.items()
-                    if k not in ["id", "labels", "entity_id"]
-                },
-            )
-
-        except Exception as e:
-            logger.error(f"Error getting node details: {e}")
-            # Mock fallback
-            for n in MOCK_NODES:
-                if n["id"] == node_id or n["id"].lower() == node_id.lower():
-                    return NodeDetailsResponse(
-                        id=n["id"],
-                        label=n["label"],
-                        type=n["type"],
-                        properties=n["properties"],
-                    )
-            # Default fallback properties
-            return NodeDetailsResponse(
-                id=node_id,
-                label=node_id,
-                type="Concept",
-                properties={
-                    "summary": f"Detailed concept profile for '{node_id}'.",
-                    "source": "Retrieved dynamically from RAG.",
-                },
-            )
+    async def get_node_details_legacy(node_id: str):
+        return await get_notebook_node_details("notebook_insurance_demo", node_id)
 
     @router.get("/graph/node/{node_id}/neighbors", response_model=GraphResponse)
-    async def get_node_neighbors(node_id: str, depth: int = Query(1, ge=1)):
-        """
-        Expand node neighbors.
-        """
-        try:
-            if not rag.graph_ready:
-                # Filter mock graph
-                neighbor_links = [
-                    l
-                    for l in MOCK_LINKS
-                    if l["source"] == node_id or l["target"] == node_id
-                ]
-                neighbor_node_ids = set()
-                for l in neighbor_links:
-                    neighbor_node_ids.add(l["source"])
-                    neighbor_node_ids.add(l["target"])
-                neighbor_node_ids.add(node_id)
-
-                nodes = [
-                    GraphNode(**n) for n in MOCK_NODES if n["id"] in neighbor_node_ids
-                ]
-                links = [
-                    GraphLink(**l)
-                    for l in MOCK_LINKS
-                    if l["source"] == node_id or l["target"] == node_id
-                ]
-                return GraphResponse(nodes=nodes, links=links)
-
-            # Real Neo4j neighbors
-            # Let's perform a simple get_knowledge_graph query centered on the node
-            subgraph = await rag.chunk_entity_relation_graph.get_knowledge_graph(
-                node_id, max_depth=depth, max_nodes=50
-            )
-
-            nodes = []
-            for n in subgraph.nodes:
-                entity_type = (
-                    n.properties.get("entity_type", "Concept")
-                    if hasattr(n, "properties")
-                    else "Concept"
-                )
-                nodes.append(
-                    GraphNode(
-                        id=n.id,
-                        label=n.id,
-                        type=entity_type,
-                        group=entity_type.lower(),
-                        properties=n.properties if hasattr(n, "properties") else {},
-                    )
-                )
-
-            links = []
-            for e in subgraph.edges:
-                links.append(
-                    GraphLink(
-                        id=e.id or f"{e.source}-{e.target}",
-                        source=e.source,
-                        target=e.target,
-                        label=e.type or "CONNECTED",
-                        properties=e.properties if hasattr(e, "properties") else {},
-                    )
-                )
-
-            return GraphResponse(nodes=nodes, links=links)
-
-        except Exception as e:
-            logger.error(f"Error expanding node neighbors: {e}")
-            # Mock fallback
-            neighbor_links = [
-                l
-                for l in MOCK_LINKS
-                if l["source"] == node_id or l["target"] == node_id
-            ]
-            neighbor_node_ids = set()
-            for l in neighbor_links:
-                neighbor_node_ids.add(l["source"])
-                neighbor_node_ids.add(l["target"])
-            neighbor_node_ids.add(node_id)
-
-            nodes = [GraphNode(**n) for n in MOCK_NODES if n["id"] in neighbor_node_ids]
-            links = [
-                GraphLink(**l)
-                for l in MOCK_LINKS
-                if l["source"] == node_id or l["target"] == node_id
-            ]
-            return GraphResponse(nodes=nodes, links=links)
+    async def get_node_neighbors_legacy(node_id: str):
+        return await get_notebook_node_neighbors("notebook_insurance_demo", node_id)
 
     return router

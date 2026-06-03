@@ -1,42 +1,43 @@
-from ..utils import verbose_debug, VERBOSE_DEBUG
-import os
-import logging
+from __future__ import annotations
 
+import logging
+import os
 from collections.abc import AsyncIterator
 
 import pipmaster as pm
 import tiktoken
 
+from ..utils import VERBOSE_DEBUG, verbose_debug
+
 # install specific modules
 if not pm.is_installed("openai"):
     pm.install("openai")
 
-from openai import (
-    APIConnectionError,
-    RateLimitError,
-    APITimeoutError,
-    InternalServerError,
-)
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type,
-)
-from app.core.utils import (
-    wrap_embedding_func_with_attrs,
-    safe_unicode_decode,
-    logger,
-)
-
-from app.core.types import GPTKeywordExtractionFormat
-from app.api import __api_version__
-
-import numpy as np
 import base64
 from typing import Any, Union
 
+import numpy as np
 from dotenv import load_dotenv
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    InternalServerError,
+    RateLimitError,
+)
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+
+from app.api import __api_version__
+from app.core.types import GPTKeywordExtractionFormat
+from app.core.utils import (
+    logger,
+    safe_unicode_decode,
+    wrap_embedding_func_with_attrs,
+)
 
 # Try to import Langfuse for LLM observability (optional)
 # Falls back to standard OpenAI client if not available

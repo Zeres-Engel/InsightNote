@@ -272,3 +272,331 @@ export const PRESET_QA: Record<string, ChatResponse> = {
     },
   },
 };
+
+export const MOCK_NODES_RESUME: GraphNode[] = [
+  {
+    id: "person_nguyen_phuoc_thanh",
+    label: "Nguyen Phuoc Thanh",
+    type: "Person",
+    group: "person",
+    properties: {
+      fullName: "Nguyen Phuoc Thanh",
+      role: "Senior AI & GraphRAG Engineer",
+      email: "nguyenphuocthanh@example.com",
+      summary: "Highly experienced AI Engineer specializing in LLM, RAG and Knowledge Graphs.",
+    },
+  },
+  {
+    id: "role_ai_engineer",
+    label: "AI Engineer",
+    type: "Role",
+    group: "role",
+    properties: {
+      summary: "Design and productionize GraphRAG, vector indexing, and Computer Vision systems."
+    },
+  },
+  {
+    id: "company_fpt_software",
+    label: "FPT Software",
+    type: "Company",
+    group: "company",
+    properties: {
+      industry: "Software Engineering & Outsourcing",
+      location: "Vietnam",
+      summary: "Top software enterprise in Southeast Asia.",
+    },
+  },
+  {
+    id: "company_rizlum",
+    label: "Rizlum",
+    type: "Company",
+    group: "company",
+    properties: {
+      industry: "InsurTech & Cloud Solutions",
+      summary: "Insurance technology automation specialist.",
+    },
+  },
+  {
+    id: "skill_graphrag",
+    label: "GraphRAG",
+    type: "Skill",
+    group: "skill",
+    properties: {
+      confidence: 0.96,
+      summary: "Multi-hop graph-based semantic search & retrieval augmentation.",
+    },
+  },
+  {
+    id: "tech_neo4j",
+    label: "Neo4j",
+    type: "Technology",
+    group: "technology",
+    properties: {
+      type: "Graph Database",
+      summary: "Primary graph storage used for entity-relation maps.",
+    },
+  },
+  {
+    id: "tech_qdrant",
+    label: "Qdrant",
+    type: "Technology",
+    group: "technology",
+    properties: {
+      type: "Vector Database",
+      summary: "High-speed semantic vector similarity search index.",
+    },
+  },
+  {
+    id: "tech_fastapi",
+    label: "FastAPI",
+    type: "Technology",
+    group: "technology",
+    properties: {
+      type: "Backend Framework",
+      summary: "Asynchronous python API development standard.",
+    },
+  },
+  {
+    id: "tech_pytorch",
+    label: "PyTorch",
+    type: "Technology",
+    group: "technology",
+    properties: {
+      type: "Deep Learning Framework",
+      summary: "Used for fine-tuning embeddings and CV models.",
+    },
+  },
+  {
+    id: "concept_cv",
+    label: "Computer Vision",
+    type: "Skill",
+    group: "skill",
+    properties: {
+      summary: "Facial detection, action recognition, and OCR models."
+    },
+  },
+  {
+    id: "concept_ocr",
+    label: "OCR",
+    type: "Skill",
+    group: "skill",
+    properties: {
+      summary: "Optical Character Recognition, layout analysis of PDFs."
+    },
+  },
+  {
+    id: "project_insurance_automation",
+    label: "Insurance Automation",
+    type: "Project",
+    group: "project",
+    properties: {
+      summary: "Accident Claim parsing with MinerU & hybrid GraphRAG."
+    },
+  },
+];
+
+export const MOCK_LINKS_RESUME: GraphLink[] = [
+  {
+    id: "edge_r01",
+    source: "person_nguyen_phuoc_thanh",
+    target: "role_ai_engineer",
+    label: "HAS_ROLE",
+  },
+  {
+    id: "edge_r02",
+    source: "person_nguyen_phuoc_thanh",
+    target: "company_fpt_software",
+    label: "WORKED_AT",
+  },
+  {
+    id: "edge_r03",
+    source: "person_nguyen_phuoc_thanh",
+    target: "company_rizlum",
+    label: "WORKS_AT",
+  },
+  {
+    id: "edge_r04",
+    source: "person_nguyen_phuoc_thanh",
+    target: "skill_graphrag",
+    label: "HAS_SKILL",
+  },
+  {
+    id: "edge_r05",
+    source: "skill_graphrag",
+    target: "tech_neo4j",
+    label: "USES_TECH",
+  },
+  {
+    id: "edge_r06",
+    source: "skill_graphrag",
+    target: "tech_qdrant",
+    label: "USES_TECH",
+  },
+  {
+    id: "edge_r07",
+    source: "skill_graphrag",
+    target: "tech_fastapi",
+    label: "USES_TECH",
+  },
+  {
+    id: "edge_r08",
+    source: "company_rizlum",
+    target: "project_insurance_automation",
+    label: "HAS_PROJECT",
+  },
+  {
+    id: "edge_r09",
+    source: "project_insurance_automation",
+    target: "concept_ocr",
+    label: "USES_TECH",
+  },
+  {
+    id: "edge_r10",
+    source: "project_insurance_automation",
+    target: "skill_graphrag",
+    label: "USES_TECH",
+  },
+  {
+    id: "edge_r11",
+    source: "company_fpt_software",
+    target: "concept_cv",
+    label: "HAS_PROJECT",
+  },
+];
+
+export const PRESET_QA_RESUME: Record<string, ChatResponse> = {
+  "what is this candidate's strongest ai experience?": {
+    answer: "Nguyen Phuoc Thanh's strongest AI experience lies in designing, developing, and deploying production-grade RAG (Retrieval-Augmented Generation) and hybrid GraphRAG systems, as well as optimizing Computer Vision algorithms (OCR layout analysis with MinerU, facial recognition, and action recognition pipelines). At Rizlum, he engineered multi-hop reasoning over large insurance databases using Neo4j and Qdrant.",
+    citations: [
+      {
+        source_id: "src_resume_pdf",
+        title: "Resume.pdf",
+        chunk_id: "chunk_res_001",
+        text: "Summary: Senior AI & GraphRAG Engineer. Extensive experience building production RAG systems with LangChain, LightRAG, Qdrant and Neo4j graph schemas.",
+        score: 0.98,
+      }
+    ],
+    retrieval_steps: [
+      "Detected core query focus: strongest AI engineering experience",
+      "Matched node identifiers: 'Nguyen Phuoc Thanh', 'AI Engineer', 'GraphRAG', 'Computer Vision'",
+      "Traversed Neo4j paths: Person -> HAS_ROLE -> AI Engineer -> HAS_SKILL -> GraphRAG",
+      "Generated grounded recommendation with citations",
+    ],
+    graph_path: {
+      node_ids: [
+        "person_nguyen_phuoc_thanh",
+        "role_ai_engineer",
+        "skill_graphrag",
+      ],
+      link_ids: ["edge_r01", "edge_r04"],
+    },
+  },
+  "what graphrag-related experience does this resume show?": {
+    answer: "This resume shows highly specialized GraphRAG experience at Rizlum, where the candidate designed and implemented end-to-end GraphRAG architectures. He integrated LangChain, LightRAG, Qdrant (vector index), and Neo4j (graph database) to enable multi-hop reasoning and deep conceptual retrieval over high-density insurance policy manuals.",
+    citations: [
+      {
+        source_id: "src_resume_pdf",
+        title: "Resume.pdf",
+        chunk_id: "chunk_res_002",
+        text: "Rizlum - AI Solutions. Designed hybrid vector-graph RAG system to traverse policy relationships in Neo4j and perform semantic search in Qdrant.",
+        score: 0.95,
+      }
+    ],
+    retrieval_steps: [
+      "Detected keyword query focus: GraphRAG experiences",
+      "Matched resume chunks containing: 'Neo4j', 'Qdrant', 'Rizlum', 'LightRAG'",
+      "Traversed Neo4j path: Nguyen Phuoc Thanh -> WORKS_AT -> Rizlum -> HAS_SKILL -> GraphRAG -> USES_TECH -> Neo4j",
+      "Synthesized detailed answer and citations",
+    ],
+    graph_path: {
+      node_ids: [
+        "person_nguyen_phuoc_thanh",
+        "company_rizlum",
+        "skill_graphrag",
+        "tech_neo4j",
+      ],
+      link_ids: ["edge_r03", "edge_r05", "edge_r10"],
+    },
+  },
+  "what projects did this candidate work on at fpt software?": {
+    answer: "At FPT Software, the candidate worked on complex computer vision and deep learning projects. These included building facial recognition verification models for security check-ins and developing deep learning action recognition models for retail space behavior analysis, utilizing PyTorch and Docker for containerized deployment.",
+    citations: [
+      {
+        source_id: "src_resume_pdf",
+        title: "Resume.pdf",
+        chunk_id: "chunk_res_003",
+        text: "FPT Software - AI Division. Developed facial recognition algorithms and multi-object action tracking. Implemented on PyTorch & Docker.",
+        score: 0.93,
+      }
+    ],
+    retrieval_steps: [
+      "Detected context query focus: projects worked at FPT Software",
+      "Retrieved company experience blocks for 'FPT Software'",
+      "Traversed Neo4j path: Nguyen Phuoc Thanh -> WORKED_AT -> FPT Software -> HAS_PROJECT -> Computer Vision",
+      "Generated grounded projects list",
+    ],
+    graph_path: {
+      node_ids: [
+        "person_nguyen_phuoc_thanh",
+        "company_fpt_software",
+        "concept_cv",
+      ],
+      link_ids: ["edge_r02", "edge_r11"],
+    },
+  },
+  "what technologies are connected to rizlum?": {
+    answer: "Rizlum is connected to GraphRAG, Neo4j, Qdrant, FastAPI, PyTorch, MongoDB, and OCR. These technologies were integrated into the production-grade Insurance Automation platform which parses and indexes policy manuals.",
+    citations: [
+      {
+        source_id: "src_resume_pdf",
+        title: "Resume.pdf",
+        chunk_id: "chunk_res_004",
+        text: "Rizlum platform tech stack: FastAPI, Qdrant vector index, Neo4j graph storage, PyTorch, MinerU layout analysis, MongoDB.",
+        score: 0.94,
+      }
+    ],
+    retrieval_steps: [
+      "Detected entity focus: Rizlum technology stack",
+      "Retrieved neighbors of node 'Rizlum'",
+      "Traversed Neo4j path: Rizlum -> HAS_PROJECT -> Insurance Automation -> USES_TECH -> GraphRAG -> USES_TECH -> Neo4j",
+      "Generated structured technology connections answer",
+    ],
+    graph_path: {
+      node_ids: [
+        "company_rizlum",
+        "project_insurance_automation",
+        "skill_graphrag",
+        "tech_neo4j",
+      ],
+      link_ids: ["edge_r08", "edge_r05", "edge_r10"],
+    },
+  },
+  "is this candidate suitable for an ai engineer role focused on llm/rag systems?": {
+    answer: "Yes, the candidate is exceptionally well-suited for an AI Engineer role focused on LLM and RAG systems. He possesses actual production-grade experience designing and maintaining hybrid vector-graph architectures, orchestrating graph traversals (Neo4j) alongside semantic vector lookups (Qdrant), and implementing layout-aware parsers (MinerU). Their active skill set in LightRAG and LangChain provides high value for enterprise LLM application development.",
+    citations: [
+      {
+        source_id: "src_resume_pdf",
+        title: "Resume.pdf",
+        chunk_id: "chunk_res_001",
+        text: "Summary: Senior AI & GraphRAG Engineer. Expert in production RAG systems with LangChain, LightRAG, Qdrant and Neo4j graph schemas.",
+        score: 0.97,
+      }
+    ],
+    retrieval_steps: [
+      "Analyzed role requirements vs candidate profile data",
+      "Retrieved GraphRAG and LLM skill levels",
+      "Traversed path: Nguyen Phuoc Thanh -> HAS_ROLE -> AI Engineer -> HAS_SKILL -> GraphRAG -> USES_TECH -> Neo4j",
+      "Synthesized high-fidelity positive evaluation",
+    ],
+    graph_path: {
+      node_ids: [
+        "person_nguyen_phuoc_thanh",
+        "role_ai_engineer",
+        "skill_graphrag",
+        "tech_neo4j",
+      ],
+      link_ids: ["edge_r01", "edge_r04", "edge_r05"],
+    },
+  },
+};
+

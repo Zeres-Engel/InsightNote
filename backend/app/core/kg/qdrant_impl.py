@@ -1,11 +1,13 @@
+from __future__ import annotations
+
 import asyncio
 import configparser
 import hashlib
 import json
 import os
 import uuid
-from dataclasses import dataclass
 import warnings
+from dataclasses import dataclass
 from typing import Any, List, final
 
 import numpy as np
@@ -97,7 +99,9 @@ def _find_legacy_collection(
     """
     # Try multiple naming patterns for backward compatibility
     candidates = [
-        f"{workspace}_{namespace}_{model_suffix}" if workspace and model_suffix else None,
+        f"{workspace}_{namespace}_{model_suffix}"
+        if workspace and model_suffix
+        else None,
         f"zerag_vdb_{namespace}_{model_suffix}" if model_suffix else None,
         f"zerag_vdb_{namespace}",
         f"{workspace}_{namespace}" if workspace else None,
@@ -223,7 +227,9 @@ class QdrantVectorDBStorage(BaseVectorStorage):
             client.create_collection(
                 collection_name, vectors_config=vectors_config, hnsw_config=hnsw_config
             )
-            logger.info(f"Qdrant: Collection '{collection_name}' created successfully (new workspace setup)")
+            logger.info(
+                f"Qdrant: Collection '{collection_name}' created successfully (new workspace setup)"
+            )
 
         # create_payload_index return without error if index already exists
         client.create_payload_index(
@@ -685,7 +691,11 @@ class QdrantVectorDBStorage(BaseVectorStorage):
         return results
 
     async def query(
-        self, query: str, top_k: int, score_threshold: float = None, query_embedding: list[float] = None
+        self,
+        query: str,
+        top_k: int,
+        score_threshold: float = None,
+        query_embedding: list[float] = None,
     ) -> list[dict[str, Any]]:
         if query_embedding is not None:
             embedding = query_embedding

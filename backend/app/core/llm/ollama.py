@@ -1,6 +1,8 @@
-from collections.abc import AsyncIterator
+from __future__ import annotations
+
 import os
 import re
+from collections.abc import AsyncIterator
 
 import pipmaster as pm
 
@@ -8,28 +10,27 @@ import pipmaster as pm
 if not pm.is_installed("ollama"):
     pm.install("ollama")
 
-import ollama
-
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type,
-)
-from app.core.exceptions import (
-    APIConnectionError,
-    RateLimitError,
-    APITimeoutError,
-)
-from app.api import __api_version__
+from typing import Optional, Union
 
 import numpy as np
-from typing import Optional, Union
-from app.core.utils import (
-    wrap_embedding_func_with_attrs,
-    logger,
+import ollama
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
 )
 
+from app.api import __api_version__
+from app.core.exceptions import (
+    APIConnectionError,
+    APITimeoutError,
+    RateLimitError,
+)
+from app.core.utils import (
+    logger,
+    wrap_embedding_func_with_attrs,
+)
 
 _OLLAMA_CLOUD_HOST = "https://ollama.com"
 _CLOUD_MODEL_SUFFIX_PATTERN = re.compile(r"(?:-cloud|:cloud)$")

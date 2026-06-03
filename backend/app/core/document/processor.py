@@ -1,25 +1,27 @@
+from __future__ import annotations
+
 """
 Document processing functionality for MultiRAG
 
 Contains methods for parsing documents and processing multimodal content
 """
 
-import os
-import time
+import asyncio
 import hashlib
 import json
-from typing import Dict, List, Any, Tuple, Optional
+import os
+import time
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.base import DocStatus
-from app.core.document.parser import MineruParser, MineruExecutionError, get_parser
+from app.core.document.parser import MineruExecutionError, MineruParser, get_parser
 from app.core.document.utils import (
-    separate_content,
+    get_processor_for_type,
     insert_text_content,
     insert_text_content_with_multimodal_content,
-    get_processor_for_type,
+    separate_content,
 )
-import asyncio
 from app.core.utils import compute_mdhash_id
 
 
@@ -669,11 +671,11 @@ class ProcessorMixin:
 
         # Batch merge all multimodal content results (similar to text content processing)
         if all_chunk_results:
-            from app.core.operate import merge_nodes_and_edges
             from app.core.kg.shared_storage import (
                 get_namespace_data,
                 get_pipeline_status_lock,
             )
+            from app.core.operate import merge_nodes_and_edges
 
             # Get pipeline status and lock from shared storage
             pipeline_status = await get_namespace_data("pipeline_status")
@@ -1013,9 +1015,7 @@ class ProcessorMixin:
             # Fallback to just the description if template fails
             return description
 
-    async def _store_chunks_to_zedata_type_aware(
-        self, chunks: Dict[str, Any]
-    ):
+    async def _store_chunks_to_zedata_type_aware(self, chunks: Dict[str, Any]):
         """Store chunks to storage"""
         try:
             # Store in text_chunks storage (required for extract_entities)
@@ -1503,31 +1503,46 @@ class ProcessorMixin:
         # Step 3: Identify multimodal items
         enriched_blocks = []
         multimodal_items = []
-        
+
         # Temporary mapping to track multimodal items
         for i, item in enumerate(content_list):
             if item.get("type", "text") == "text":
-                enriched_blocks.append({"type": "text", "content": item.get("text", ""), "original_index": i})
+                enriched_blocks.append(
+                    {
+                        "type": "text",
+                        "content": item.get("text", ""),
+                        "original_index": i,
+                    }
+                )
             else:
-                block = {"type": "multimodal", "content": "", "item": item, "original_index": i}
+                block = {
+                    "type": "multimodal",
+                    "content": "",
+                    "item": item,
+                    "original_index": i,
+                }
                 enriched_blocks.append(block)
                 multimodal_items.append(block)
 
         if multimodal_items:
             self.logger.info(f"Enriching {len(multimodal_items)} multimodal items...")
-            
+
             # Use batch processing logic to generate descriptions
             # We'll use a simplified version of _process_multimodal_content_batch_type_aware
             semaphore = asyncio.Semaphore(getattr(self.zerag, "max_parallel_insert", 2))
-            
+
             async def enrich_item(block):
                 async with semaphore:
                     item = block["item"]
                     content_type = item.get("type", "unknown")
-                    processor = get_processor_for_type(self.modal_processors, content_type)
-                    
+                    processor = get_processor_for_type(
+                        self.modal_processors, content_type
+                    )
+
                     if not processor:
-                        block["content"] = f"[Unsupported multimodal content: {content_type}]"
+                        block["content"] = (
+                            f"[Unsupported multimodal content: {content_type}]"
+                        )
                         return
 
                     try:
@@ -1536,15 +1551,17 @@ class ProcessorMixin:
                             "index": block["original_index"],
                             "type": content_type,
                         }
-                        
+
                         description, _ = await processor.generate_description_only(
                             modal_content=item,
                             content_type=content_type,
-                            item_info=item_info
+                            item_info=item_info,
                         )
-                        
+
                         # Apply template
-                        block["content"] = self._apply_chunk_template(content_type, item, description)
+                        block["content"] = self._apply_chunk_template(
+                            content_type, item, description
+                        )
                     except Exception as e:
                         self.logger.error(f"Error enriching {content_type} item: {e}")
                         block["content"] = f"[Error processing {content_type} content]"
@@ -1552,8 +1569,10 @@ class ProcessorMixin:
             await asyncio.gather(*(enrich_item(b) for b in multimodal_items))
 
         # Step 4: Join all blocks into a single string
-        final_content = "\n\n".join(b["content"] for b in enriched_blocks if b["content"].strip())
-        
+        final_content = "\n\n".join(
+            b["content"] for b in enriched_blocks if b["content"].strip()
+        )
+
         return final_content
 
     async def process_document_complete(
@@ -1634,7 +1653,7 @@ class ProcessorMixin:
             if file_name is None:
                 file_name = self._get_file_reference(file_path)
 
-         # Step 4: Process multimodal content (using specialized processors)
+        # Step 4: Process multimodal content (using specialized processors)
         if multimodal_items:
             await self._process_multimodal_content(multimodal_items, file_name, doc_id)
         else:
@@ -1646,7 +1665,7 @@ class ProcessorMixin:
             )
 
         self.logger.info(f"Document {file_path} processing complete!")
-        
+
         # Added: Return full content if requested via kwargs (for unified pipeline)
         if kwargs.get("return_content", False):
             # If we already processed it, we can just join the results, but it's cleaner to use get_enriched_content
@@ -1735,9 +1754,7 @@ class ProcessorMixin:
                         }
                     }
                 )
-                current_doc_status = await self.zerag.doc_status.get_by_id(
-                    doc_pre_id
-                )
+                current_doc_status = await self.zerag.doc_status.get_by_id(doc_pre_id)
 
             from app.core.kg.shared_storage import (
                 get_namespace_data,

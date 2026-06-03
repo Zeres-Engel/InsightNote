@@ -1,22 +1,25 @@
+from __future__ import annotations
+
 """
 Query functionality for MultiRAG
 
 Contains all query-related methods for both text and multimodal queries
 """
 
-import json
 import hashlib
+import json
 import re
-from typing import Dict, List, Any
 from pathlib import Path
+from typing import Any, Dict, List
+
 from app.core import QueryParam
-from app.core.utils import always_get_an_event_loop
 from app.core.document.prompt import PROMPTS
 from app.core.document.utils import (
-    get_processor_for_type,
     encode_image_to_base64,
+    get_processor_for_type,
     validate_image_file,
 )
+from app.core.utils import always_get_an_event_loop
 
 
 class QueryMixin:
@@ -276,9 +279,7 @@ class QueryMixin:
                         "mode": mode,
                     }
 
-                    await self.zerag.llm_response_cache.upsert(
-                        {cache_key: cache_entry}
-                    )
+                    await self.zerag.llm_response_cache.upsert({cache_key: cache_entry})
                     self.logger.info(
                         f"Saved multimodal query result to cache: {cache_key[:16]}..."
                     )
@@ -389,7 +390,7 @@ class QueryMixin:
         for i, content in enumerate(multimodal_content):
             content_type = content.get("type", "unknown")
             self.logger.info(
-                f"Processing {i+1}/{len(multimodal_content)} multimodal content: {content_type}"
+                f"Processing {i + 1}/{len(multimodal_content)} multimodal content: {content_type}"
             )
 
             try:

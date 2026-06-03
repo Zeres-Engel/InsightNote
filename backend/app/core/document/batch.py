@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Batch processing functionality for MultiRAG
 
@@ -6,9 +8,9 @@ Contains methods for processing multiple documents in batch mode
 
 import asyncio
 import logging
-from pathlib import Path
-from typing import List, Dict, Any, Optional, TYPE_CHECKING
 import time
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from .batch_parser import BatchParser, BatchProcessingResult
 

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Utility functions for MultiRAG
 
@@ -5,8 +7,9 @@ Contains helper functions for content separation, text insertion, and other util
 """
 
 import base64
-from typing import Dict, List, Any, Tuple
 from pathlib import Path
+from typing import Any, Dict, List, Tuple
+
 from app.core.utils import logger
 
 
@@ -186,7 +189,7 @@ async def insert_text_content(
                 full_text=full_text,
                 text_chunks=text_chunks,
                 doc_id=doc_id,
-                metadata=metadatas, # We'll add this parameter to ZeRAG
+                metadata=metadatas,  # We'll add this parameter to ZeRAG
             )
         else:
             # Fallback to normal insert if method is missing (shouldn't happen)
