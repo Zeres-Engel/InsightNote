@@ -1,0 +1,38 @@
+version: '3'
+
+tasks:
+  up:
+    desc: Build and start the full Docker Compose multi-container stack in background
+    cmds:
+      - echo "Spinning up InsightNote docker compose stack..."
+      - docker compose up --build -d
+
+  down:
+    desc: Stop and clear the Docker Compose container network
+    cmds:
+      - echo "Stopping docker compose stack..."
+      - docker compose down
+
+  logs:
+    desc: Follow real-time logs from all running Docker services
+    cmds:
+      - docker compose logs -f
+
+  clean:
+    desc: Hard reset - stop containers and wipe all persistent database volumes (Mongo, Neo4j, Qdrant)
+    cmds:
+      - echo "Wiping docker compose stack and all database volumes..."
+      - docker compose down -v
+      - echo "Docker environment fully reset."
+
+  build-backend:
+    desc: Dry-run build of the Backend Docker image to verify compilation
+    cmds:
+      - echo "Building backend docker image (dry-run)..."
+      - docker build -t insightnote-backend:latest ./backend
+
+  build-frontend:
+    desc: Dry-run build of the Frontend Docker image to verify compilation
+    cmds:
+      - echo "Building frontend docker image (dry-run)..."
+      - docker build -t insightnote-frontend:latest ./frontend

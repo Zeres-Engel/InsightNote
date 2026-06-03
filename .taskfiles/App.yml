@@ -1,0 +1,27 @@
+version: '3'
+
+tasks:
+  install:
+    desc: Install dependencies for both frontend and backend local development
+    cmds:
+      - echo "Installing Backend requirements..."
+      - cd backend && pip install -r requirements.txt
+      - echo "Installing Frontend NPM packages..."
+      - cd frontend && npm install
+
+  dev:
+    desc: Start both FastAPI backend and Vite frontend locally in parallel
+    cmds:
+      - echo "Starting InsightNote Local Development Workspace..."
+      - |
+        # On Unix-based systems we can run in background.
+        # This spawns both the backend server and frontend client.
+        (cd backend && python server.py) & (cd frontend && npm run dev)
+
+  clean-cache:
+    desc: Clear python pycache files and local rag storage
+    cmds:
+      - echo "Clearing python caches..."
+      - find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+      - find . -type f -name "*.pyc" -delete 2>/dev/null || true
+      - echo "Python caches cleared."

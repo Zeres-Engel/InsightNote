@@ -1,55 +1,12 @@
-version: '3'
+version: "3"
 
-vars:
-  BACKEND_DIR: backend
-  FRONTEND_DIR: frontend
+includes:
+  docker: .taskfiles/Docker.yml
+  test: .taskfiles/Test.yml
+  app: .taskfiles/App.yml
 
 tasks:
   default:
-    desc: List all available automation tasks
+    desc: List all available modular automation tasks
     cmds:
       - task --list
-
-  install:
-    desc: Install dependencies for both frontend and backend
-    cmds:
-      - echo "Installing Backend requirements..."
-      - cd {{.BACKEND_DIR}} && pip install -r requirements.txt
-      - echo "Installing Frontend NPM packages..."
-      - cd {{.FRONTEND_DIR}} && npm install
-
-  dev:
-    desc: Start both FastAPI backend and Vite frontend locally for development
-    cmds:
-      - echo "Starting InsightNote Workspace..."
-      - |
-        echo "Starting Backend on http://localhost:8000"
-        echo "Starting Frontend on http://localhost:5173"
-      - |
-        # Run backend and frontend in parallel
-        # Note: If running on Windows, you can open separate terminals or use concurrently.
-        # This command is optimized to spawn background processes or run sequentially depending on OS.
-        (cd {{.BACKEND_DIR}} && python server.py) & (cd {{.FRONTEND_DIR}} && npm run dev)
-
-  test:
-    desc: Run the Pytest test suite (including unit and integration tests)
-    cmds:
-      - echo "Running InsightNote test suite..."
-      - cd {{.BACKEND_DIR}} && pytest tests/ -v
-
-  docker-up:
-    desc: Build and start the full Docker Compose multi-container stack
-    cmds:
-      - echo "Spinning up InsightNote docker compose stack..."
-      - docker compose up --build -d
-
-  docker-down:
-    desc: Stop and clear the Docker Compose container network
-    cmds:
-      - echo "Stopping docker compose stack..."
-      - docker compose down
-
-  docker-logs:
-    desc: Follow real-time logs from all running Docker services
-    cmds:
-      - docker compose logs -f

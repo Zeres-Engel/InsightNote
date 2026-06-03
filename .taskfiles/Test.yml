@@ -1,0 +1,38 @@
+version: '3'
+
+tasks:
+  all:
+    desc: Run the complete Pytest test suite (unit + integration + regression)
+    cmds:
+      - echo "Running all backend tests..."
+      - cd backend && pytest tests/ -v
+
+  unit:
+    desc: Run unit tests specifically
+    cmds:
+      - echo "Running backend unit tests..."
+      - cd backend && pytest tests/unit/ -v
+
+  integration:
+    desc: Run integration tests specifically
+    cmds:
+      - echo "Running backend integration tests..."
+      - cd backend && pytest tests/integration/ -v
+
+  regression:
+    desc: Run regression tests specifically
+    cmds:
+      - echo "Running backend regression tests..."
+      - cd backend && pytest tests/regression/ -v
+
+  lint-backend:
+    desc: Run python compilation syntax checks
+    cmds:
+      - echo "Linting backend python files..."
+      - python -m compileall backend/app backend/server.py
+
+  lint-frontend:
+    desc: Run TypeScript type compilation checks on the frontend
+    cmds:
+      - echo "Checking frontend typescript compilation..."
+      - cd frontend && npm run build
