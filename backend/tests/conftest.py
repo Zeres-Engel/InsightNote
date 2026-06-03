@@ -8,25 +8,24 @@ from fastapi.testclient import TestClient
 os.environ["WORKSPACE"] = "test-workspace"
 os.environ["WORKING_DIR"] = "./test_rag_storage"
 
-from server import app, doc_manager, rag
+import server
 
 
 @pytest.fixture
 def mock_rag():
-    """Fixture to mock ZeRAG instance and its storages."""
-    mock_inst = MagicMock()
-    mock_inst.graph_ready = False
-    mock_inst.workspace = "test-workspace"
+    """Fixture that configures and returns the patched server.rag instance."""
+    # Patch the real server.rag attributes in-place so closures are preserved
+    server.rag.graph_ready = False
+    server.rag.workspace = "test-workspace"
 
     # Mock doc_status storage
     mock_doc_status = AsyncMock()
-    # Mock return values
     mock_doc_status.get_docs_paginated.return_value = ([], 0)
-    mock_inst.doc_status = mock_doc_status
+    server.rag.doc_status = mock_doc_status
 
     # Mock aquery_llm
-    mock_inst.aquery_llm = AsyncMock()
-    mock_inst.aquery_llm.return_value = {
+    server.rag.aquery_llm = AsyncMock()
+    server.rag.aquery_llm.return_value = {
         "status": "success",
         "message": "Query executed",
         "llm_response": {"content": "This is a real RAG answer."},
@@ -43,18 +42,24 @@ def mock_rag():
     mock_graph = AsyncMock()
     mock_graph.get_all_nodes.return_value = []
     mock_graph.get_all_edges.return_value = []
-    mock_inst.chunk_entity_relation_graph = mock_graph
+    server.rag.chunk_entity_relation_graph = mock_graph
 
-    return mock_inst
+    # Mock lifespan actions
+    server.rag.initialize_storages = AsyncMock()
+    server.rag.finalize_storages = AsyncMock()
+    server.rag.check_and_migrate_data = AsyncMock()
+
+    return server.rag
 
 
 @pytest.fixture
-def client(mock_rag, monkeypatch):
+def client(mock_rag):
     """Fixture for FastAPI TestClient."""
-    # Patch the global 'rag' inside server.py with our mock_rag
-    import server
+    # Monkeypatch the background tasks to prevent actual RAG pipeline executions during unit testing
+    import app.api.routers.insightnote_routes
 
-    monkeypatch.setattr(server, "rag", mock_rag)
+    app.api.routers.insightnote_routes.pipeline_index_texts = AsyncMock()
+    app.api.routers.insightnote_routes.pipeline_enqueue_file = AsyncMock()
 
-    with TestClient(app) as test_client:
+    with TestClient(server.app) as test_client:
         yield test_client

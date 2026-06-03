@@ -36,6 +36,7 @@ logger = logging.getLogger("zerag-insightnote")
 class HealthResponse(BaseModel):
     status: str = "ok"
     service: str = "insightnote-backend"
+    runtime: str = "gpu_env"
 
 
 class SourceAddRequest(BaseModel):
@@ -118,7 +119,7 @@ class NodeDetailsResponse(BaseModel):
 MOCK_NODES = [
     {
         "id": "policy_001",
-        "label": "Insurance Policy",
+        "label": "Policy",
         "type": "Document",
         "group": "document",
         "properties": {
@@ -128,7 +129,7 @@ MOCK_NODES = [
     },
     {
         "id": "coverage_012",
-        "label": "Comprehensive Coverage",
+        "label": "Coverage",
         "type": "Clause",
         "group": "clause",
         "properties": {
@@ -260,7 +261,7 @@ PRESET_QA = {
         "citations": [
             {
                 "source_id": "src_001",
-                "title": "Insurance Policy",
+                "title": "Insurance Policy Demo",
                 "chunk_id": "chunk_001",
                 "text": "Section 1.1: Core Liability Coverage. The company agrees to pay damages for bodily injury or property damage for which any insured becomes legally responsible because of an auto accident. bodily injury liability is capped at $100,000 per person.",
                 "score": 0.95,
@@ -268,7 +269,7 @@ PRESET_QA = {
         ],
         "retrieval_steps": [
             "Detected key entities: Policy, Coverage, Main",
-            "Retrieved Section 1.1 (Core Liability Coverage) from 'Insurance Policy'",
+            "Retrieved Section 1.1 (Core Liability Coverage) from 'Insurance Policy Demo'",
             "Traversed graph path from Policy -> HAS_COVERAGE -> Comprehensive Coverage",
             "Generated grounded answer with citations",
         ],
@@ -282,7 +283,7 @@ PRESET_QA = {
         "citations": [
             {
                 "source_id": "src_001",
-                "title": "Insurance Policy",
+                "title": "Insurance Policy Demo",
                 "chunk_id": "chunk_018",
                 "text": "Section 3.4: Motorcycle Rider Endorsement. Vehicle coverage extends to two-wheeled motorized vehicles listed on the insurance schedule, provided they are operated by licensed drivers. No coverage is provided for speed trials or competitive events.",
                 "score": 0.92,
@@ -290,7 +291,7 @@ PRESET_QA = {
         ],
         "retrieval_steps": [
             "Detected key entities: Motorcycle, Accident, Coverage",
-            "Retrieved Section 3.4 (Motorcycle Rider Endorsement) from 'Insurance Policy'",
+            "Retrieved Section 3.4 (Motorcycle Rider Endorsement) from 'Insurance Policy Demo'",
             "Traversed graph path from Policy -> Comprehensive Coverage -> Vehicle Accident -> Motorcycle",
             "Generated grounded answer with citations",
         ],
@@ -309,15 +310,15 @@ PRESET_QA = {
         "citations": [
             {
                 "source_id": "src_001",
-                "title": "Insurance Policy",
+                "title": "Insurance Policy Demo",
                 "chunk_id": "chunk_022",
-                "text": "Section 4.2: General Exclusions. Under no circumstances will liability coverage apply to losses arising from racing, commercial livery (including ridesharing), or while operating a vehicle with a blood-alcohol level above the legal limit.",
+                "text": "Section 4.2: General Exclusions. Under no circumstances will liability coverage apply to losses arising from racing, commercial livery (including ridesharing), or while operating a vehicle with a blood-alcohol level above the level limit.",
                 "score": 0.89,
             }
         ],
         "retrieval_steps": [
             "Detected key entities: Exclusion, Vehicle, Accident",
-            "Retrieved Section 4.2 (General Exclusions) from 'Insurance Policy'",
+            "Retrieved Section 4.2 (General Exclusions) from 'Insurance Policy Demo'",
             "Traversed graph path from Comprehensive Coverage -> HAS_EXCLUSION -> General Exclusion",
             "Generated grounded answer with citations",
         ],
@@ -331,14 +332,14 @@ PRESET_QA = {
         "citations": [
             {
                 "source_id": "src_001",
-                "title": "Insurance Policy",
+                "title": "Insurance Policy Demo",
                 "chunk_id": "chunk_001",
                 "text": "Section 1.1: Core Liability Coverage. The company agrees to pay damages for bodily injury or property damage for which any insured becomes legally responsible because of an auto accident.",
                 "score": 0.94,
             },
             {
                 "source_id": "src_001",
-                "title": "Insurance Policy",
+                "title": "Insurance Policy Demo",
                 "chunk_id": "chunk_018",
                 "text": "Section 3.4: Motorcycle Rider Endorsement. Vehicle coverage extends to two-wheeled motorized vehicles listed on the insurance schedule, provided they are operated by licensed drivers.",
                 "score": 0.91,
@@ -359,7 +360,7 @@ PRESET_QA = {
         "citations": [
             {
                 "source_id": "src_001",
-                "title": "Insurance Policy",
+                "title": "Insurance Policy Demo",
                 "chunk_id": "chunk_018",
                 "text": "Section 3.4: Motorcycle Rider Endorsement. Vehicle coverage extends to two-wheeled motorized vehicles listed on the insurance schedule...",
                 "score": 0.96,

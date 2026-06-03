@@ -1365,91 +1365,55 @@ async def pipeline_enqueue_file(
 
         # Process based on file type
         try:
-            match ext:
-                case (
-                    ".txt"
-                    | ".md"
-                    | ".mdx"
-                    | ".html"
-                    | ".htm"
-                    | ".tex"
-                    | ".json"
-                    | ".xml"
-                    | ".yaml"
-                    | ".yml"
-                    | ".rtf"
-                    | ".odt"
-                    | ".epub"
-                    | ".csv"
-                    | ".log"
-                    | ".conf"
-                    | ".ini"
-                    | ".properties"
-                    | ".sql"
-                    | ".bat"
-                    | ".sh"
-                    | ".c"
-                    | ".h"
-                    | ".cpp"
-                    | ".hpp"
-                    | ".py"
-                    | ".java"
-                    | ".js"
-                    | ".ts"
-                    | ".swift"
-                    | ".go"
-                    | ".rb"
-                    | ".php"
-                    | ".css"
-                    | ".scss"
-                    | ".less"
-                ):
-                    try:
-                        # Try to decode as UTF-8
-                        content = file.decode("utf-8")
+            if ext in (
+                ".txt",
+                ".md",
+                ".mdx",
+                ".html",
+                ".htm",
+                ".tex",
+                ".json",
+                ".xml",
+                ".yaml",
+                ".yml",
+                ".rtf",
+                ".odt",
+                ".epub",
+                ".csv",
+                ".log",
+                ".conf",
+                ".ini",
+                ".properties",
+                ".sql",
+                ".bat",
+                ".sh",
+                ".c",
+                ".h",
+                ".cpp",
+                ".hpp",
+                ".py",
+                ".java",
+                ".js",
+                ".ts",
+                ".swift",
+                ".go",
+                ".rb",
+                ".php",
+                ".css",
+                ".scss",
+                ".less",
+            ):
+                try:
+                    # Try to decode as UTF-8
+                    content = file.decode("utf-8")
 
-                        # Validate content
-                        if not content or len(content.strip()) == 0:
-                            error_files = [
-                                {
-                                    "file_path": str(file_path.name),
-                                    "error_description": "[File Extraction]Empty file content",
-                                    "original_error": "File contains no content or only whitespace",
-                                    "file_size": file_size,
-                                }
-                            ]
-                            await rag.apipeline_enqueue_error_documents(
-                                error_files, track_id
-                            )
-                            logger.error(
-                                f"[File Extraction]Empty content in file: {file_path.name}"
-                            )
-                            return False, track_id
-
-                        # Check if content looks like binary data string representation
-                        if content.startswith("b'") or content.startswith('b"'):
-                            error_files = [
-                                {
-                                    "file_path": str(file_path.name),
-                                    "error_description": "[File Extraction]Binary data in text file",
-                                    "original_error": "File appears to contain binary data representation instead of text",
-                                    "file_size": file_size,
-                                }
-                            ]
-                            await rag.apipeline_enqueue_error_documents(
-                                error_files, track_id
-                            )
-                            logger.error(
-                                f"[File Extraction]File {file_path.name} appears to contain binary data representation instead of text"
-                            )
-                            return False, track_id
-
-                    except UnicodeDecodeError as e:
+                    # Validate content
+                    if not content or len(content.strip()) == 0:
                         error_files = [
                             {
                                 "file_path": str(file_path.name),
-                                "error_description": "[File Extraction]UTF-8 encoding error, please convert it to UTF-8 before processing",
-                                "original_error": f"File is not valid UTF-8 encoded text: {str(e)}",
+                                "error_description": "[File Extraction]Empty file content",
+                                "original_error": "File contains no content or only whitespace",
                                 "file_size": file_size,
                             }
                         ]
@@ -1457,55 +1421,17 @@ async def pipeline_enqueue_file(
                             error_files, track_id
                         )
                         logger.error(
-                            f"[File Extraction]File {file_path.name} is not valid UTF-8 encoded text. Please convert it to UTF-8 before processing."
+                            f"[File Extraction]Empty content in file: {file_path.name}"
                         )
                         return False, track_id
 
-                case ".pdf":
-                    try:
-                        # Try TEXTRACT first if configured (unified TXT/DOCX/PPTX/CSV/PDF support)
-                        if (
-                            global_args.document_loading_engine == "TEXTRACT"
-                            and _is_textract_available()
-                        ):
-                            content = await asyncio.to_thread(
-                                _extract_with_textract, file_path
-                            )
-                        # Try DOCLING if configured and available
-                        elif (
-                            global_args.document_loading_engine == "DOCLING"
-                            and _is_docling_available()
-                        ):
-                            content = await asyncio.to_thread(
-                                _convert_with_docling, file_path
-                            )
-                        else:
-                            if (
-                                global_args.document_loading_engine == "DOCLING"
-                                and not _is_docling_available()
-                            ):
-                                logger.warning(
-                                    f"DOCLING engine configured but not available for {file_path.name}. Falling back to pypdf."
-                                )
-                            if (
-                                global_args.document_loading_engine == "TEXTRACT"
-                                and not _is_textract_available()
-                            ):
-                                logger.warning(
-                                    f"TEXTRACT engine configured but not available for {file_path.name}. Falling back to pypdf."
-                                )
-                            # Use pypdf (non-blocking via to_thread)
-                            content = await asyncio.to_thread(
-                                _extract_pdf_pypdf,
-                                file,
-                                global_args.pdf_decrypt_password,
-                            )
-                    except Exception as e:
+                    # Check if content looks like binary data string representation
+                    if content.startswith("b'") or content.startswith('b"'):
                         error_files = [
                             {
                                 "file_path": str(file_path.name),
-                                "error_description": "[File Extraction]PDF processing error",
-                                "original_error": f"Failed to extract text from PDF: {str(e)}",
+                                "error_description": "[File Extraction]Binary data in text file",
+                                "original_error": "File appears to contain binary data representation instead of text",
                                 "file_size": file_size,
                             }
                         ]
@@ -1513,177 +1439,250 @@ async def pipeline_enqueue_file(
                             error_files, track_id
                         )
                         logger.error(
-                            f"[File Extraction]Error processing PDF {file_path.name}: {str(e)}"
+                            f"[File Extraction]File {file_path.name} appears to contain binary data representation instead of text"
                         )
                         return False, track_id
 
-                case ".docx":
-                    try:
-                        # Try TEXTRACT first if configured
-                        if (
-                            global_args.document_loading_engine == "TEXTRACT"
-                            and _is_textract_available()
-                        ):
-                            content = await asyncio.to_thread(
-                                _extract_with_textract, file_path
-                            )
-                        elif (
-                            global_args.document_loading_engine == "DOCLING"
-                            and _is_docling_available()
-                        ):
-                            content = await asyncio.to_thread(
-                                _convert_with_docling, file_path
-                            )
-                        else:
-                            if (
-                                global_args.document_loading_engine == "DOCLING"
-                                and not _is_docling_available()
-                            ):
-                                logger.warning(
-                                    f"DOCLING engine configured but not available for {file_path.name}. Falling back to python-docx."
-                                )
-                            if (
-                                global_args.document_loading_engine == "TEXTRACT"
-                                and not _is_textract_available()
-                            ):
-                                logger.warning(
-                                    f"TEXTRACT engine configured but not available for {file_path.name}. Falling back to python-docx."
-                                )
-                            # Use python-docx (non-blocking via to_thread)
-                            content = await asyncio.to_thread(_extract_docx, file)
-                    except Exception as e:
-                        error_files = [
-                            {
-                                "file_path": str(file_path.name),
-                                "error_description": "[File Extraction]DOCX processing error",
-                                "original_error": f"Failed to extract text from DOCX: {str(e)}",
-                                "file_size": file_size,
-                            }
-                        ]
-                        await rag.apipeline_enqueue_error_documents(
-                            error_files, track_id
-                        )
-                        logger.error(
-                            f"[File Extraction]Error processing DOCX {file_path.name}: {str(e)}"
-                        )
-                        return False, track_id
-
-                case ".pptx":
-                    try:
-                        # Try TEXTRACT first if configured
-                        if (
-                            global_args.document_loading_engine == "TEXTRACT"
-                            and _is_textract_available()
-                        ):
-                            content = await asyncio.to_thread(
-                                _extract_with_textract, file_path
-                            )
-                        elif (
-                            global_args.document_loading_engine == "DOCLING"
-                            and _is_docling_available()
-                        ):
-                            content = await asyncio.to_thread(
-                                _convert_with_docling, file_path
-                            )
-                        else:
-                            if (
-                                global_args.document_loading_engine == "DOCLING"
-                                and not _is_docling_available()
-                            ):
-                                logger.warning(
-                                    f"DOCLING engine configured but not available for {file_path.name}. Falling back to python-pptx."
-                                )
-                            if (
-                                global_args.document_loading_engine == "TEXTRACT"
-                                and not _is_textract_available()
-                            ):
-                                logger.warning(
-                                    f"TEXTRACT engine configured but not available for {file_path.name}. Falling back to python-pptx."
-                                )
-                            # Use python-pptx (non-blocking via to_thread)
-                            content = await asyncio.to_thread(_extract_pptx, file)
-                    except Exception as e:
-                        error_files = [
-                            {
-                                "file_path": str(file_path.name),
-                                "error_description": "[File Extraction]PPTX processing error",
-                                "original_error": f"Failed to extract text from PPTX: {str(e)}",
-                                "file_size": file_size,
-                            }
-                        ]
-                        await rag.apipeline_enqueue_error_documents(
-                            error_files, track_id
-                        )
-                        logger.error(
-                            f"[File Extraction]Error processing PPTX {file_path.name}: {str(e)}"
-                        )
-                        return False, track_id
-
-                case ".xlsx":
-                    try:
-                        # Try TEXTRACT first if configured
-                        if (
-                            global_args.document_loading_engine == "TEXTRACT"
-                            and _is_textract_available()
-                        ):
-                            content = await asyncio.to_thread(
-                                _extract_with_textract, file_path
-                            )
-                        elif (
-                            global_args.document_loading_engine == "DOCLING"
-                            and _is_docling_available()
-                        ):
-                            content = await asyncio.to_thread(
-                                _convert_with_docling, file_path
-                            )
-                        else:
-                            if (
-                                global_args.document_loading_engine == "DOCLING"
-                                and not _is_docling_available()
-                            ):
-                                logger.warning(
-                                    f"DOCLING engine configured but not available for {file_path.name}. Falling back to openpyxl."
-                                )
-                            if (
-                                global_args.document_loading_engine == "TEXTRACT"
-                                and not _is_textract_available()
-                            ):
-                                logger.warning(
-                                    f"TEXTRACT engine configured but not available for {file_path.name}. Falling back to openpyxl."
-                                )
-                            # Use openpyxl (non-blocking via to_thread)
-                            content = await asyncio.to_thread(_extract_xlsx, file)
-                    except Exception as e:
-                        error_files = [
-                            {
-                                "file_path": str(file_path.name),
-                                "error_description": "[File Extraction]XLSX processing error",
-                                "original_error": f"Failed to extract text from XLSX: {str(e)}",
-                                "file_size": file_size,
-                            }
-                        ]
-                        await rag.apipeline_enqueue_error_documents(
-                            error_files, track_id
-                        )
-                        logger.error(
-                            f"[File Extraction]Error processing XLSX {file_path.name}: {str(e)}"
-                        )
-                        return False, track_id
-
-                case _:
+                except UnicodeDecodeError as e:
                     error_files = [
                         {
                             "file_path": str(file_path.name),
-                            "error_description": f"[File Extraction]Unsupported file type: {ext}",
-                            "original_error": f"File extension {ext} is not supported",
+                            "error_description": "[File Extraction]UTF-8 encoding error, please convert it to UTF-8 before processing",
+                            "original_error": f"File is not valid UTF-8 encoded text: {str(e)}",
                             "file_size": file_size,
                         }
                     ]
-                    await rag.apipeline_enqueue_error_documents(error_files, track_id)
+                    await rag.apipeline_enqueue_error_documents(
+                        error_files, track_id
+                    )
                     logger.error(
-                        f"[File Extraction]Unsupported file type: {file_path.name} (extension {ext})"
+                        f"[File Extraction]File {file_path.name} is not valid UTF-8 encoded text. Please convert it to UTF-8 before processing."
                     )
                     return False, track_id
+
+            elif ext == ".pdf":
+                try:
+                    # Try TEXTRACT first if configured (unified TXT/DOCX/PPTX/CSV/PDF support)
+                    if (
+                        global_args.document_loading_engine == "TEXTRACT"
+                        and _is_textract_available()
+                    ):
+                        content = await asyncio.to_thread(
+                            _extract_with_textract, file_path
+                        )
+                    # Try DOCLING if configured and available
+                    elif (
+                        global_args.document_loading_engine == "DOCLING"
+                        and _is_docling_available()
+                    ):
+                        content = await asyncio.to_thread(
+                            _convert_with_docling, file_path
+                        )
+                    else:
+                        if (
+                            global_args.document_loading_engine == "DOCLING"
+                            and not _is_docling_available()
+                        ):
+                            logger.warning(
+                                f"DOCLING engine configured but not available for {file_path.name}. Falling back to pypdf."
+                            )
+                        if (
+                            global_args.document_loading_engine == "TEXTRACT"
+                            and not _is_textract_available()
+                        ):
+                            logger.warning(
+                                f"TEXTRACT engine configured but not available for {file_path.name}. Falling back to pypdf."
+                            )
+                        # Use pypdf (non-blocking via to_thread)
+                        content = await asyncio.to_thread(
+                            _extract_pdf_pypdf,
+                            file,
+                            global_args.pdf_decrypt_password,
+                        )
+                except Exception as e:
+                    error_files = [
+                        {
+                            "file_path": str(file_path.name),
+                            "error_description": "[File Extraction]PDF processing error",
+                            "original_error": f"Failed to extract text from PDF: {str(e)}",
+                            "file_size": file_size,
+                        }
+                    ]
+                    await rag.apipeline_enqueue_error_documents(
+                        error_files, track_id
+                    )
+                    logger.error(
+                        f"[File Extraction]Error processing PDF {file_path.name}: {str(e)}"
+                    )
+                    return False, track_id
+
+            elif ext == ".docx":
+                try:
+                    # Try TEXTRACT first if configured
+                    if (
+                        global_args.document_loading_engine == "TEXTRACT"
+                        and _is_textract_available()
+                    ):
+                        content = await asyncio.to_thread(
+                            _extract_with_textract, file_path
+                        )
+                    elif (
+                        global_args.document_loading_engine == "DOCLING"
+                        and _is_docling_available()
+                    ):
+                        content = await asyncio.to_thread(
+                            _convert_with_docling, file_path
+                        )
+                    else:
+                        if (
+                            global_args.document_loading_engine == "DOCLING"
+                            and not _is_docling_available()
+                        ):
+                            logger.warning(
+                                f"DOCLING engine configured but not available for {file_path.name}. Falling back to python-docx."
+                            )
+                        if (
+                            global_args.document_loading_engine == "TEXTRACT"
+                            and not _is_textract_available()
+                        ):
+                            logger.warning(
+                                f"TEXTRACT engine configured but not available for {file_path.name}. Falling back to python-docx."
+                            )
+                        # Use python-docx (non-blocking via to_thread)
+                        content = await asyncio.to_thread(_extract_docx, file)
+                except Exception as e:
+                    error_files = [
+                        {
+                            "file_path": str(file_path.name),
+                            "error_description": "[File Extraction]DOCX processing error",
+                            "original_error": f"Failed to extract text from DOCX: {str(e)}",
+                            "file_size": file_size,
+                        }
+                    ]
+                    await rag.apipeline_enqueue_error_documents(
+                        error_files, track_id
+                    )
+                    logger.error(
+                        f"[File Extraction]Error processing DOCX {file_path.name}: {str(e)}"
+                    )
+                    return False, track_id
+
+            elif ext == ".pptx":
+                try:
+                    # Try TEXTRACT first if configured
+                    if (
+                        global_args.document_loading_engine == "TEXTRACT"
+                        and _is_textract_available()
+                    ):
+                        content = await asyncio.to_thread(
+                            _extract_with_textract, file_path
+                        )
+                    elif (
+                        global_args.document_loading_engine == "DOCLING"
+                        and _is_docling_available()
+                    ):
+                        content = await asyncio.to_thread(
+                            _convert_with_docling, file_path
+                        )
+                    else:
+                        if (
+                            global_args.document_loading_engine == "DOCLING"
+                            and not _is_docling_available()
+                        ):
+                            logger.warning(
+                                f"DOCLING engine configured but not available for {file_path.name}. Falling back to python-pptx."
+                            )
+                        if (
+                            global_args.document_loading_engine == "TEXTRACT"
+                            and not _is_textract_available()
+                        ):
+                            logger.warning(
+                                f"TEXTRACT engine configured but not available for {file_path.name}. Falling back to python-pptx."
+                            )
+                        # Use python-pptx (non-blocking via to_thread)
+                        content = await asyncio.to_thread(_extract_pptx, file)
+                except Exception as e:
+                    error_files = [
+                        {
+                            "file_path": str(file_path.name),
+                            "error_description": "[File Extraction]PPTX processing error",
+                            "original_error": f"Failed to extract text from PPTX: {str(e)}",
+                            "file_size": file_size,
+                        }
+                    ]
+                    await rag.apipeline_enqueue_error_documents(
+                        error_files, track_id
+                    )
+                    logger.error(
+                        f"[File Extraction]Error processing PPTX {file_path.name}: {str(e)}"
+                    )
+                    return False, track_id
+
+            elif ext == ".xlsx":
+                try:
+                    # Try TEXTRACT first if configured
+                    if (
+                        global_args.document_loading_engine == "TEXTRACT"
+                        and _is_textract_available()
+                    ):
+                        content = await asyncio.to_thread(
+                            _extract_with_textract, file_path
+                        )
+                    elif (
+                        global_args.document_loading_engine == "DOCLING"
+                        and _is_docling_available()
+                    ):
+                        content = await asyncio.to_thread(
+                            _convert_with_docling, file_path
+                        )
+                    else:
+                        if (
+                            global_args.document_loading_engine == "DOCLING"
+                            and not _is_docling_available()
+                        ):
+                            logger.warning(
+                                f"DOCLING engine configured but not available for {file_path.name}. Falling back to openpyxl."
+                            )
+                        if (
+                            global_args.document_loading_engine == "TEXTRACT"
+                            and not _is_textract_available()
+                        ):
+                            logger.warning(
+                                f"TEXTRACT engine configured but not available for {file_path.name}. Falling back to openpyxl."
+                            )
+                        # Use openpyxl (non-blocking via to_thread)
+                        content = await asyncio.to_thread(_extract_xlsx, file)
+                except Exception as e:
+                    error_files = [
+                        {
+                            "file_path": str(file_path.name),
+                            "error_description": "[File Extraction]XLSX processing error",
+                            "original_error": f"Failed to extract text from XLSX: {str(e)}",
+                            "file_size": file_size,
+                        }
+                    ]
+                    await rag.apipeline_enqueue_error_documents(
+                        error_files, track_id
+                    )
+                    logger.error(
+                        f"[File Extraction]Error processing XLSX {file_path.name}: {str(e)}"
+                    )
+                    return False, track_id
+
+            else:
+                error_files = [
+                    {
+                        "file_path": str(file_path.name),
+                        "error_description": f"[File Extraction]Unsupported file type: {ext}",
+                        "original_error": f"File extension {ext} is not supported",
+                        "file_size": file_size,
+                    }
+                ]
+                await rag.apipeline_enqueue_error_documents(error_files, track_id)
+                logger.error(
+                    f"[File Extraction]Unsupported file type: {file_path.name} (extension {ext})"
+                )
+                return False, track_id
 
         except Exception as e:
             error_files = [

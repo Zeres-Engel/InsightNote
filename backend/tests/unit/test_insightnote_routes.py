@@ -17,7 +17,7 @@ def test_list_sources_empty_fallback(client):
     assert response.status_code == 200
     data = response.json()
     assert len(data) == 1
-    assert data[0]["name"] == "Insurance Policy (Demo)"
+    assert data[0]["name"] == "Insurance Policy Demo"
     assert data[0]["status"] == "ready"
 
 
@@ -47,7 +47,7 @@ def test_chat_preset_question(client):
     data = response.json()
     assert "Yes. Motorcycle accidents are covered" in data["answer"]
     assert len(data["citations"]) == 1
-    assert data["citations"][0]["title"] == "Insurance Policy"
+    assert data["citations"][0]["title"] == "Insurance Policy Demo"
     assert data["graph_path"]["node_ids"] == [
         "policy_001",
         "coverage_012",
@@ -86,5 +86,5 @@ def test_get_node_details(client):
     assert response.status_code == 200
     data = response.json()
     assert data["id"] == "policy_001"
-    assert data["label"] == "Insurance Policy"
+    assert data["label"] == "Policy"
     assert data["properties"]["source"] == "Policy Main"
