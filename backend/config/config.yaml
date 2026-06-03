@@ -1,0 +1,67 @@
+# Server Configuration
+server:
+  host: "0.0.0.0"
+  port: 8000
+  working_dir: "./rag_storage"
+  workspace: "default"
+
+# LLM Configuration (v98store - qwen-plus)
+llm:
+  binding: "openai"
+  model: "qwen-plus"
+  api_key: "${OPENAI_API_KEY}"
+  base_url: "${LLM_BASE_URL:-https://v98store.com/v1}"
+
+# Embedding Configuration (v98store - text-embedding-3-small, 1536d)
+embedding:
+  binding: "openai"
+  model: "text-embedding-3-small"
+  api_key: "${OPENAI_API_KEY}"
+  base_url: "${EMBEDDING_BASE_URL:-https://v98store.com/v1}"
+
+# Reranker Configuration (v98store - BAAI/bge-reranker-v2-m3)
+reranker:
+  binding: "jina"
+  model: "BAAI/bge-reranker-v2-m3"
+  base_url: "${LLM_BASE_URL:-https://v98store.com/v1}/rerank"
+  api_key: "${OPENAI_API_KEY}"
+  max_tokens: 4096
+
+# Storage Backends Selection
+storage:
+  kv: "MongoKVStorage"
+  graph: "Neo4JStorage"
+  vector: "QdrantVectorDBStorage"
+  doc_status: "MongoDocStatusStorage"
+
+# Infrastructure & Services
+infrastructure:
+  mongodb:
+    image: "mongo:latest"
+    uri: "${MONGO_URI:-mongodb://localhost:27017}"
+    database: "${MONGO_DATABASE:-cosigmadoc}"
+    container_port: 27017
+    host_port: 27017
+    volume_name: "mongo_data"
+
+  neo4j:
+    image: "graphstack/dozerdb:5.26.3"
+    uri: "${NEO4J_URI:-bolt://localhost:7687}"
+    user: "${NEO4J_USER:-neo4j}"
+    password: "${NEO4J_PASSWORD:-password}"
+    http_port: 7474
+    bolt_port: 7687
+    volume_name: "neo4j_data"
+
+  qdrant:
+    image: "qdrant/qdrant:latest"
+    url: "${QDRANT_URL:-http://localhost:6333}"
+    api_key: "${QDRANT_API_KEY:-}"
+    container_port: 6333
+    host_port: 6333
+    volume_name: "qdrant_data"
+
+# Common service networks and volumes
+deployment:
+  network_name: "net"
+  restart_policy: "always"

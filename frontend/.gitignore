@@ -1,0 +1,15 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+.vercel
+.env
+.env.local
+
+# Testing
+coverage/
+.nyc_output
+
+# Production
+.next/

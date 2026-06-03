@@ -1,0 +1,31 @@
+fastapi
+uvicorn
+pydantic
+python-dotenv
+pipmaster
+ascii_colors
+tiktoken
+numpy
+networkx
+tenacity
+aiohttp
+openai
+sentence-transformers
+# Storage requirements
+pymongo
+neo4j
+qdrant-client
+# Parser and other requirements
+# magic-pdf[full]==0.9.11
+reportlab
+pandas
+requests
+tqdm
+tabulate
+PyYAML>=6.0.0
+json-repair
+mineru[core]
+PyJWT
+python-multipart
+# Optional: textract for unified extraction (TXT, DOCX, PPTX, CSV, PDF)
+# pip install textract  # requires system deps: poppler, tesseract, etc.

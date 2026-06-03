@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+jspm_packages/
+web_modules/
+
+# Python Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Python Caches & Compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Local Storage (RAG assets & uploaded documents)
+rag_storage/
+data/inputs/
+mineru_output/
+*.log
+logs/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Environment configurations
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDEs & System files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
