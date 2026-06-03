@@ -1,4 +1,4 @@
-import { defineConfig, Plugin } from 'vite'
+import { defineConfig, Plugin, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react-swc'
 import fs from 'fs'
 import path from 'path'
@@ -82,13 +82,19 @@ function localPdfApi(): Plugin {
     };
 }
 
-export default defineConfig({
-    plugins: [react(), localPdfApi()],
-    server: {
-        port: 3000,
-        host: true,
-        watch: {
-            usePolling: true,
+export default defineConfig(({ mode }) => {
+    const env = loadEnv(mode, process.cwd(), '');
+    return {
+        plugins: [react(), localPdfApi()],
+        define: {
+            'process.env.NEXT_PUBLIC_API_BASE_URL': JSON.stringify(env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000')
+        },
+        server: {
+            port: 3000,
+            host: true,
+            watch: {
+                usePolling: true,
+            }
         }
-    }
+    };
 })

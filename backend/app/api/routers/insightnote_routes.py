@@ -556,7 +556,7 @@ def create_insightnote_routes(
             raise HTTPException(status_code=500, detail=str(e))
 
     @router.get("/sources", response_model=List[SourceListItem])
-    async def list_sources():
+    async def list_sources(workspace_id: Optional[str] = Query(None)):
         """
         List all sources ingested.
         """
@@ -575,8 +575,8 @@ def create_insightnote_routes(
                 sources.append(
                     SourceListItem(
                         id="src_001",
-                        name="Insurance Policy (Demo)",
-                        type="pdf",
+                        name="Insurance Policy Demo",
+                        type="demo",
                         status="ready",
                         entity_count=10,
                         chunk_count=24,
@@ -609,8 +609,8 @@ def create_insightnote_routes(
             return [
                 SourceListItem(
                     id="src_001",
-                    name="Insurance Policy (Fallback)",
-                    type="pdf",
+                    name="Insurance Policy Demo",
+                    type="demo",
                     status="ready",
                     entity_count=10,
                     chunk_count=24,

@@ -11,7 +11,8 @@ import {
   PRESET_QA
 } from './mock-data';
 
-const BASE_URL = 'http://localhost:8000/api';
+const API_BASE_URL = (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_API_BASE_URL) || 'http://localhost:8000';
+const BASE_URL = `${API_BASE_URL.replace(/\/$/, '')}/api`;
 
 // Simple in-memory storage for sources added during this session
 let sessionSources: SourceListItem[] = [...MOCK_SOURCES];

@@ -70,7 +70,8 @@ When you are asked to make changes, adhere strictly to these rules:
 1.  **Do Not Break Sandbox Mode**: Ensure that any changes to API models, types, or components do not crash when running on local mock-data in `frontend/src/lib/mock-data.ts`. Maintain exact compatibility.
 2.  **Keep Frontend and Backend Decoupled**: Never call the database directly from the frontend; always channel queries through `/api/` routers. All API queries should reside strictly inside `frontend/src/lib/api.ts`.
 3.  **Validate Build & Type safety**:
-    *   To verify frontend compilation: Run `npm run build` in the `frontend` folder.
+    *   To verify frontend compilation: Run `npm run build` in the `frontend` folder (using Docker or local package manager).
+    *   To verify backend test coverage: **MUST activate the GPU environment `gpu_env`** (e.g., `conda activate gpu_env`) and run `pytest tests/ -v` inside the `backend` folder. Running heavy GPU calculations on standard CPU environments is discouraged.
     *   To verify backend schemas: Ensure Pydantic classes in `insightnote_routes.py` are strictly defined and correct.
 4.  **No Extraneous Packages**: Reuse Lucide icons, Framer Motion, and Tailwind classes. Do not install heavy dependencies unless explicitly authorized.
 

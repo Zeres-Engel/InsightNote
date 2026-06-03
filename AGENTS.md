@@ -38,13 +38,15 @@ InsightNote consists of three parallel, loosely coupled pillars that form a unif
 ## 💡 Implementation Guidelines & Constraints
 
 *   **Strict Decoupling**: All frontend-to-backend communication must happen exclusively via standard asynchronous HTTP calls inside `frontend/src/lib/api.ts`.
+*   **GPU Environment for Backend Tests (`gpu_env`)**: Due to GPU-intensive requirements (such as PDF layout parsing with MinerU and entity/vector generation), developers and agents **MUST use the `gpu_env` environment** (e.g., `conda activate gpu_env`) to run all backend test suites and pipeline indexing tests. Running GPU-heavy tasks on CPU-only environments is discouraged due to performance constraints.
+*   **Docker for Frontend (FE)**: The frontend (FE) should be developed, tested, and deployed using Docker as usual (e.g., via the automated `task docker:up` or running isolated container flows).
 *   **Maintain Sandbox Fallbacks**:
     *   If database engines (Mongo, Neo4j, Qdrant) are not running or if a connection fails, the system **must never throw red error screens** or crash.
     *   `frontend/src/lib/api.ts` must automatically catch errors and transition transparently into **insurance domain sandbox mode** (defined in `frontend/src/lib/mock-data.ts`).
     *   `backend/app/api/routers/insightnote_routes.py` similarly contains full mock mockups for all routes. Keep them up-to-date if you introduce new endpoints.
 *   **Do Not Break Compilation**: Always run TypeScript check and compilation tests before completing your tasks:
     *   Frontend: `cd frontend && npm run build`
-    *   Backend: `cd backend && pytest tests/ -v`
+    *   Backend (inside `gpu_env`): `cd backend && pytest tests/ -v`
 
 ---
 
