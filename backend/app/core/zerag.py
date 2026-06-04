@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import traceback
 import asyncio
 import configparser
 import inspect
 import os
 import time
+import traceback
 import warnings
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
@@ -15,106 +15,104 @@ from typing import (
     AsyncIterator,
     Awaitable,
     Callable,
+    Dict,
     Iterator,
-    cast,
-    final,
+    List,
     Literal,
     Optional,
-    List,
-    Dict,
     Union,
-)
-from app.core.prompt import PROMPTS
-from app.core.exceptions import PipelineCancelledException
-from app.core.constants import (
-    DEFAULT_MAX_GLEANING,
-    DEFAULT_FORCE_LLM_SUMMARY_ON_MERGE,
-    DEFAULT_TOP_K,
-    DEFAULT_CHUNK_TOP_K,
-    DEFAULT_MAX_ENTITY_TOKENS,
-    DEFAULT_MAX_RELATION_TOKENS,
-    DEFAULT_MAX_TOTAL_TOKENS,
-    DEFAULT_COSINE_THRESHOLD,
-    DEFAULT_RELATED_CHUNK_NUMBER,
-    DEFAULT_KG_CHUNK_PICK_METHOD,
-    DEFAULT_MIN_RERANK_SCORE,
-    DEFAULT_SUMMARY_MAX_TOKENS,
-    DEFAULT_SUMMARY_CONTEXT_SIZE,
-    DEFAULT_SUMMARY_LENGTH_RECOMMENDED,
-    DEFAULT_MAX_EXTRACT_INPUT_TOKENS,
-    DEFAULT_MAX_ASYNC,
-    DEFAULT_MAX_PARALLEL_INSERT,
-    DEFAULT_MAX_GRAPH_NODES,
-    DEFAULT_MAX_SOURCE_IDS_PER_ENTITY,
-    DEFAULT_MAX_SOURCE_IDS_PER_RELATION,
-    DEFAULT_ENTITY_TYPES,
-    DEFAULT_SUMMARY_LANGUAGE,
-    DEFAULT_LLM_TIMEOUT,
-    DEFAULT_EMBEDDING_TIMEOUT,
-    DEFAULT_SOURCE_IDS_LIMIT_METHOD,
-    DEFAULT_MAX_FILE_PATHS,
-    DEFAULT_FILE_PATH_MORE_PLACEHOLDER,
-)
-from app.core.utils import get_env_value
-
-from app.core.kg import (
-    STORAGES,
-    verify_storage_implementation,
+    cast,
+    final,
 )
 
-
-from app.core.kg.shared_storage import (
-    get_namespace_data,
-    get_data_init_lock,
-    get_default_workspace,
-    set_default_workspace,
-    get_namespace_lock,
-)
+from dotenv import load_dotenv
 
 from app.core.base import (
     BaseGraphStorage,
     BaseKVStorage,
     BaseVectorStorage,
+    DeletionResult,
     DocProcessingStatus,
     DocStatus,
     DocStatusStorage,
+    OllamaServerInfos,
     QueryParam,
+    QueryResult,
     StorageNameSpace,
     StoragesStatus,
-    DeletionResult,
-    OllamaServerInfos,
-    QueryResult,
+)
+from app.core.constants import (
+    DEFAULT_CHUNK_TOP_K,
+    DEFAULT_COSINE_THRESHOLD,
+    DEFAULT_EMBEDDING_TIMEOUT,
+    DEFAULT_ENTITY_TYPES,
+    DEFAULT_FILE_PATH_MORE_PLACEHOLDER,
+    DEFAULT_FORCE_LLM_SUMMARY_ON_MERGE,
+    DEFAULT_KG_CHUNK_PICK_METHOD,
+    DEFAULT_LLM_TIMEOUT,
+    DEFAULT_MAX_ASYNC,
+    DEFAULT_MAX_ENTITY_TOKENS,
+    DEFAULT_MAX_EXTRACT_INPUT_TOKENS,
+    DEFAULT_MAX_FILE_PATHS,
+    DEFAULT_MAX_GLEANING,
+    DEFAULT_MAX_GRAPH_NODES,
+    DEFAULT_MAX_PARALLEL_INSERT,
+    DEFAULT_MAX_RELATION_TOKENS,
+    DEFAULT_MAX_SOURCE_IDS_PER_ENTITY,
+    DEFAULT_MAX_SOURCE_IDS_PER_RELATION,
+    DEFAULT_MAX_TOTAL_TOKENS,
+    DEFAULT_MIN_RERANK_SCORE,
+    DEFAULT_RELATED_CHUNK_NUMBER,
+    DEFAULT_SOURCE_IDS_LIMIT_METHOD,
+    DEFAULT_SUMMARY_CONTEXT_SIZE,
+    DEFAULT_SUMMARY_LANGUAGE,
+    DEFAULT_SUMMARY_LENGTH_RECOMMENDED,
+    DEFAULT_SUMMARY_MAX_TOKENS,
+    DEFAULT_TOP_K,
+    GRAPH_FIELD_SEP,
+)
+from app.core.exceptions import PipelineCancelledException
+from app.core.kg import (
+    STORAGES,
+    verify_storage_implementation,
+)
+from app.core.kg.shared_storage import (
+    get_data_init_lock,
+    get_default_workspace,
+    get_namespace_data,
+    get_namespace_lock,
+    set_default_workspace,
 )
 from app.core.namespace import NameSpace
 from app.core.operate import (
     chunking_by_token_size,
     extract_entities,
-    merge_nodes_and_edges,
     kg_query,
+    merge_nodes_and_edges,
     naive_query,
     rebuild_knowledge_from_chunks,
 )
-from app.core.constants import GRAPH_FIELD_SEP
+from app.core.prompt import PROMPTS
+from app.core.types import KnowledgeGraph
 from app.core.utils import (
-    Tokenizer,
-    TiktokenTokenizer,
     EmbeddingFunc,
+    TiktokenTokenizer,
+    Tokenizer,
     always_get_an_event_loop,
-    compute_mdhash_id,
-    lazy_external_import,
-    priority_limit_async_func_call,
-    get_content_summary,
-    sanitize_text_for_encoding,
     check_storage_env_vars,
-    generate_track_id,
+    compute_mdhash_id,
     convert_to_user_format,
+    generate_track_id,
+    get_content_summary,
+    get_env_value,
+    lazy_external_import,
     logger,
-    subtract_source_ids,
     make_relation_chunk_key,
     normalize_source_ids_limit_method,
+    priority_limit_async_func_call,
+    sanitize_text_for_encoding,
+    subtract_source_ids,
 )
-from app.core.types import KnowledgeGraph
-from dotenv import load_dotenv
 
 # use the .env that is inside the current folder
 # allows to use different .env file for each zerag instance
@@ -714,9 +712,13 @@ class ZeRAG:
                     try:
                         await storage.initialize()
                         if storage_name == "doc_status":
-                            logger.info(f"[{self.workspace}] MongoDB (DocStatus) initialized successfully")
+                            logger.info(
+                                f"[{self.workspace}] MongoDB (DocStatus) initialized successfully"
+                            )
                     except Exception as e:
-                        logger.error(f"[{self.workspace}] Failed to initialize {storage_name}: {e}")
+                        logger.error(
+                            f"[{self.workspace}] Failed to initialize {storage_name}: {e}"
+                        )
                         raise e
 
             # Initialize Vector DBs
@@ -729,9 +731,13 @@ class ZeRAG:
                     try:
                         await storage.initialize()
                         if storage_name == "chunks_vdb":
-                            logger.info(f"[{self.workspace}] Qdrant (VectorDB) initialized successfully")
+                            logger.info(
+                                f"[{self.workspace}] Qdrant (VectorDB) initialized successfully"
+                            )
                     except Exception as e:
-                        logger.error(f"[{self.workspace}] Failed to initialize {storage_name}: {e}")
+                        logger.error(
+                            f"[{self.workspace}] Failed to initialize {storage_name}: {e}"
+                        )
                         raise e
 
             # Initialize Graph Storage (Neo4j)
@@ -739,7 +745,9 @@ class ZeRAG:
                 if self.chunk_entity_relation_graph:
                     await self.chunk_entity_relation_graph.initialize()
                     self.graph_ready = True
-                    logger.info(f"[{self.workspace}] Neo4j Graph initialized successfully")
+                    logger.info(
+                        f"[{self.workspace}] Neo4j Graph initialized successfully"
+                    )
             except Exception as e:
                 self.graph_ready = False
                 logger.warning(
@@ -760,7 +768,9 @@ class ZeRAG:
                     try:
                         await storage.initialize()
                     except Exception as e:
-                        logger.warning(f"[{self.workspace}] Failed to initialize KG-KV {storage_name}: {e}")
+                        logger.warning(
+                            f"[{self.workspace}] Failed to initialize KG-KV {storage_name}: {e}"
+                        )
 
             self._storages_status = StoragesStatus.INITIALIZED
             logger.debug("All storage types initialized")
@@ -818,7 +828,7 @@ class ZeRAG:
         if not getattr(self, "graph_ready", False):
             logger.debug("Graph mode is disabled, skipping data migration")
             return
-            
+
         async with get_data_init_lock():
             try:
                 # Check if migration is needed:
@@ -1217,7 +1227,7 @@ class ZeRAG:
         ids: str | list[str] | None = None,
         file_paths: str | list[str] | None = None,
         track_id: str | None = None,
-        metadata: list[dict[str, Any]] | None = None, # Added metadata
+        metadata: list[dict[str, Any]] | None = None,  # Added metadata
     ) -> str:
         """Async Insert documents with checkpoint support
 
@@ -1240,8 +1250,8 @@ class ZeRAG:
             track_id = generate_track_id("insert")
 
         await self.apipeline_enqueue_documents(input, ids, file_paths, track_id)
-        # Note: apipeline_process_enqueue_documents doesn't handle metadata yet 
-        # because it does the chunking itself. 
+        # Note: apipeline_process_enqueue_documents doesn't handle metadata yet
+        # because it does the chunking itself.
         # But if we use ainsert_custom_chunks, it will work.
         await self.apipeline_process_enqueue_documents(
             split_by_character, split_by_character_only
@@ -1258,7 +1268,9 @@ class ZeRAG:
         """Async Drop all storage backends."""
         logger.info(f"Dropping all storages for workspace '{self.workspace}'")
         tasks = []
-        if hasattr(self, "llm_response_cache") and hasattr(self.llm_response_cache, "drop"):
+        if hasattr(self, "llm_response_cache") and hasattr(
+            self.llm_response_cache, "drop"
+        ):
             tasks.append(self.llm_response_cache.drop())
         if hasattr(self, "text_chunks") and hasattr(self.text_chunks, "drop"):
             tasks.append(self.text_chunks.drop())
@@ -1268,7 +1280,9 @@ class ZeRAG:
             tasks.append(self.doc_status.drop())
         if hasattr(self, "entities_vdb") and hasattr(self.entities_vdb, "drop"):
             tasks.append(self.entities_vdb.drop())
-        if hasattr(self, "relationships_vdb") and hasattr(self.relationships_vdb, "drop"):
+        if hasattr(self, "relationships_vdb") and hasattr(
+            self.relationships_vdb, "drop"
+        ):
             tasks.append(self.relationships_vdb.drop())
         if hasattr(self, "chunks_vdb") and hasattr(self.chunks_vdb, "drop"):
             tasks.append(self.chunks_vdb.drop())
@@ -1300,7 +1314,6 @@ class ZeRAG:
         loop.run_until_complete(
             self.ainsert_custom_chunks(full_text, text_chunks, doc_id, metadata)
         )
-
 
     # TODO: deprecated, use ainsert instead
     async def ainsert_custom_chunks(
@@ -1343,7 +1356,9 @@ class ZeRAG:
                     "tokens": tokens,
                     "chunk_order_index": index,
                     "file_path": file_path,
-                    "metadata": metadata[index] if metadata and index < len(metadata) else {},
+                    "metadata": metadata[index]
+                    if metadata and index < len(metadata)
+                    else {},
                 }
 
             doc_ids = set(inserting_chunks.keys())
@@ -1489,18 +1504,20 @@ class ZeRAG:
         # Since we zipped and de-duplicated based on content, we need to find the original index for metadata
         for orig_idx, (doc, path) in enumerate(zip(input, file_paths)):
             cleaned_content = sanitize_text_for_encoding(doc)
-            
+
             # Find the ID associated with this document content based on logic in step 1
             if ids is not None:
                 id_ = ids[orig_idx]
             else:
                 id_ = compute_mdhash_id(cleaned_content, prefix="doc-")
-            
+
             # Check if this ID already populated (in case of duplicate content within the batch, we keep the first one's metadata)
             if id_ not in new_docs:
                 content_data = contents[id_]
-                meta_data = metadata_list[orig_idx] if orig_idx < len(metadata_list) else {}
-                
+                meta_data = (
+                    metadata_list[orig_idx] if orig_idx < len(metadata_list) else {}
+                )
+
                 new_docs[id_] = {
                     "status": DocStatus.PENDING,
                     "content_summary": get_content_summary(content_data["content"]),
@@ -1509,7 +1526,7 @@ class ZeRAG:
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                     "file_path": content_data["file_path"],
                     "track_id": track_id,
-                    "metadata": meta_data, # Store metadata config
+                    "metadata": meta_data,  # Store metadata config
                 }
 
         # 3. Filter out already processed documents
@@ -1606,14 +1623,15 @@ class ZeRAG:
         Content will be extracted dynamically during processing (e.g., via MinerU).
         """
         import os
+
         from .utils import compute_mdhash_id
-        
+
         if track_id is None or track_id.strip() == "":
             track_id = generate_track_id("enqueue")
 
         # Use file path as the basis for the doc_id to avoid creating duplicates
         doc_id = compute_mdhash_id(file_path, prefix="doc-")
-        
+
         # Check if already exists in doc_status
         existing_doc = await self.doc_status.get_by_id(doc_id)
         if existing_doc:
@@ -1634,7 +1652,7 @@ class ZeRAG:
             "file_path": file_path,
             "track_id": track_id,
         }
-        
+
         if metadata:
             new_doc["metadata"] = metadata
 
@@ -1811,8 +1829,10 @@ class ZeRAG:
             # Check if document has corresponding content in full_docs or valid file_path (consistency check)
             content_data = await self.full_docs.get_by_id(doc_id)
             file_path = getattr(status_doc, "file_path", "unknown_source")
-            
-            if content_data or (file_path and file_path != "unknown_source" and file_path != ""):  # Document passes consistency check
+
+            if content_data or (
+                file_path and file_path != "unknown_source" and file_path != ""
+            ):  # Document passes consistency check
                 # Check if document is in PROCESSING or FAILED status
                 if hasattr(status_doc, "status") and status_doc.status in [
                     DocStatus.PROCESSING,
@@ -1822,7 +1842,9 @@ class ZeRAG:
                     metadata = getattr(status_doc, "metadata", {}) or {}
                     if not isinstance(metadata, dict):
                         metadata = {}
-                    if status_doc.status == DocStatus.FAILED and metadata.get("is_duplicate", False):
+                    if status_doc.status == DocStatus.FAILED and metadata.get(
+                        "is_duplicate", False
+                    ):
                         continue
 
                     # Restore graph_mode/multi_modal if missing (legacy docs had metadata overwritten)
@@ -2039,17 +2061,23 @@ class ZeRAG:
                             doc_metadata = getattr(status_doc, "metadata", {})
                             if doc_metadata is None:
                                 doc_metadata = {}
-                                
-                            if hasattr(status_doc, "status") and status_doc.status == DocStatus.FAILED and doc_metadata.get("is_duplicate", False):
+
+                            if (
+                                hasattr(status_doc, "status")
+                                and status_doc.status == DocStatus.FAILED
+                                and doc_metadata.get("is_duplicate", False)
+                            ):
                                 async with pipeline_status_lock:
                                     # Update processed file count and save current file number
                                     processed_count += 1
                                     current_file_number = processed_count
                                     pipeline_status["cur_batch"] = processed_count
-                                    
+
                                     log_message = f"Skipping duplicate document {current_file_number}/{total_files}: {file_path}"
                                     logger.info(log_message)
-                                    pipeline_status["history_messages"].append(log_message)
+                                    pipeline_status["history_messages"].append(
+                                        log_message
+                                    )
                                 return
 
                             async with pipeline_status_lock:
@@ -2085,9 +2113,18 @@ class ZeRAG:
                                 # Check metadata to decide: only use dynamic MinerU processing if multi_modal=True
                                 _check_meta = getattr(status_doc, "metadata", {}) or {}
                                 _is_multi_modal = _check_meta.get("multi_modal", False)
-                                if _is_multi_modal and hasattr(self, "file_processor_func") and self.file_processor_func and file_path and file_path != "unknown_source" and file_path != "":
+                                if (
+                                    _is_multi_modal
+                                    and hasattr(self, "file_processor_func")
+                                    and self.file_processor_func
+                                    and file_path
+                                    and file_path != "unknown_source"
+                                    and file_path != ""
+                                ):
                                     # Preserve original metadata for merge
-                                    _dyn_metadata = getattr(status_doc, "metadata", None)
+                                    _dyn_metadata = getattr(
+                                        status_doc, "metadata", None
+                                    )
                                     if not isinstance(_dyn_metadata, dict):
                                         _dyn_metadata = {}
 
@@ -2096,26 +2133,54 @@ class ZeRAG:
                                         {
                                             doc_id: {
                                                 "status": DocStatus.PROCESSING,
-                                                "content_summary": getattr(status_doc, "content_summary", ""),
-                                                "content_length": getattr(status_doc, "content_length", 0),
-                                                "created_at": getattr(status_doc, "created_at", datetime.now(timezone.utc).isoformat()),
-                                                "updated_at": datetime.now(timezone.utc).isoformat(),
+                                                "content_summary": getattr(
+                                                    status_doc, "content_summary", ""
+                                                ),
+                                                "content_length": getattr(
+                                                    status_doc, "content_length", 0
+                                                ),
+                                                "created_at": getattr(
+                                                    status_doc,
+                                                    "created_at",
+                                                    datetime.now(
+                                                        timezone.utc
+                                                    ).isoformat(),
+                                                ),
+                                                "updated_at": datetime.now(
+                                                    timezone.utc
+                                                ).isoformat(),
                                                 "file_path": file_path,
-                                                "track_id": getattr(status_doc, "track_id", ""),
-                                                "metadata": {**_dyn_metadata, "processing_start_time": processing_start_time},
+                                                "track_id": getattr(
+                                                    status_doc, "track_id", ""
+                                                ),
+                                                "metadata": {
+                                                    **_dyn_metadata,
+                                                    "processing_start_time": processing_start_time,
+                                                },
                                             }
                                         }
                                     )
-                                    
+
                                     try:
                                         # Process the file dynamically
                                         # Unified Pipeline: The processor returns the enriched content string
-                                        dynamic_result = await self.file_processor_func(file_path, doc_id=doc_id, track_id=getattr(status_doc, "track_id", ""))
-                                        
-                                        if isinstance(dynamic_result, str) and dynamic_result:
+                                        dynamic_result = await self.file_processor_func(
+                                            file_path,
+                                            doc_id=doc_id,
+                                            track_id=getattr(
+                                                status_doc, "track_id", ""
+                                            ),
+                                        )
+
+                                        if (
+                                            isinstance(dynamic_result, str)
+                                            and dynamic_result
+                                        ):
                                             # We received enriched content! Continue the pipeline.
                                             content = dynamic_result
-                                            logger.info(f"Dynamic processor (MultiRAG) returned enriched content ({len(content)} chars). Continuing unified pipeline.")
+                                            logger.info(
+                                                f"Dynamic processor (MultiRAG) returned enriched content ({len(content)} chars). Continuing unified pipeline."
+                                            )
                                             # Fall through to chunking and KG extraction
                                         else:
                                             # Legacy behavior: Dynamic processor handled everything (or returned True/None)
@@ -2124,12 +2189,30 @@ class ZeRAG:
                                                 {
                                                     doc_id: {
                                                         "status": DocStatus.PROCESSED,
-                                                        "content_summary": getattr(status_doc, "content_summary", ""),
-                                                        "content_length": getattr(status_doc, "content_length", 0),
-                                                        "created_at": getattr(status_doc, "created_at", datetime.now(timezone.utc).isoformat()),
-                                                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                                                        "content_summary": getattr(
+                                                            status_doc,
+                                                            "content_summary",
+                                                            "",
+                                                        ),
+                                                        "content_length": getattr(
+                                                            status_doc,
+                                                            "content_length",
+                                                            0,
+                                                        ),
+                                                        "created_at": getattr(
+                                                            status_doc,
+                                                            "created_at",
+                                                            datetime.now(
+                                                                timezone.utc
+                                                            ).isoformat(),
+                                                        ),
+                                                        "updated_at": datetime.now(
+                                                            timezone.utc
+                                                        ).isoformat(),
                                                         "file_path": file_path,
-                                                        "track_id": getattr(status_doc, "track_id", ""),
+                                                        "track_id": getattr(
+                                                            status_doc, "track_id", ""
+                                                        ),
                                                         "metadata": {
                                                             **_dyn_metadata,
                                                             "processing_start_time": processing_start_time,
@@ -2141,31 +2224,55 @@ class ZeRAG:
                                             async with pipeline_status_lock:
                                                 log_message = f"Completed dynamic processing file {current_file_number}/{total_files}: {file_path}"
                                                 logger.info(log_message)
-                                                pipeline_status["latest_message"] = log_message
-                                                pipeline_status["history_messages"].append(log_message)
+                                                pipeline_status["latest_message"] = (
+                                                    log_message
+                                                )
+                                                pipeline_status[
+                                                    "history_messages"
+                                                ].append(log_message)
                                             return  # Exit function, dynamic processing handled everything
-                                        
+
                                     except Exception as e:
                                         logger.error(traceback.format_exc())
                                         error_msg = f"Dynamic file processing failed for document {current_file_number}/{total_files}: {file_path}"
                                         logger.error(error_msg)
                                         async with pipeline_status_lock:
-                                            pipeline_status["latest_message"] = error_msg
-                                            pipeline_status["history_messages"].append(traceback.format_exc())
-                                            pipeline_status["history_messages"].append(error_msg)
-                                        
+                                            pipeline_status["latest_message"] = (
+                                                error_msg
+                                            )
+                                            pipeline_status["history_messages"].append(
+                                                traceback.format_exc()
+                                            )
+                                            pipeline_status["history_messages"].append(
+                                                error_msg
+                                            )
+
                                         processing_end_time = int(time.time())
                                         await self.doc_status.upsert(
                                             {
                                                 doc_id: {
                                                     "status": DocStatus.FAILED,
                                                     "error_msg": str(e),
-                                                    "content_summary": getattr(status_doc, "content_summary", ""),
-                                                    "content_length": getattr(status_doc, "content_length", 0),
-                                                    "created_at": getattr(status_doc, "created_at", datetime.now(timezone.utc).isoformat()),
+                                                    "content_summary": getattr(
+                                                        status_doc,
+                                                        "content_summary",
+                                                        "",
+                                                    ),
+                                                    "content_length": getattr(
+                                                        status_doc, "content_length", 0
+                                                    ),
+                                                    "created_at": getattr(
+                                                        status_doc,
+                                                        "created_at",
+                                                        datetime.now(
+                                                            timezone.utc
+                                                        ).isoformat(),
+                                                    ),
                                                     "updated_at": datetime.now().isoformat(),
                                                     "file_path": file_path,
-                                                    "track_id": getattr(status_doc, "track_id", ""),
+                                                    "track_id": getattr(
+                                                        status_doc, "track_id", ""
+                                                    ),
                                                     "metadata": {
                                                         **_dyn_metadata,
                                                         "processing_start_time": processing_start_time,
@@ -2186,14 +2293,33 @@ class ZeRAG:
                                             doc_id: {
                                                 "status": DocStatus.FAILED,
                                                 "error_msg": f"No content found and multi_modal is disabled",
-                                                "content_summary": getattr(status_doc, "content_summary", ""),
-                                                "content_length": getattr(status_doc, "content_length", 0),
-                                                "created_at": getattr(status_doc, "created_at", datetime.now(timezone.utc).isoformat()),
-                                                "updated_at": datetime.now(timezone.utc).isoformat(),
+                                                "content_summary": getattr(
+                                                    status_doc, "content_summary", ""
+                                                ),
+                                                "content_length": getattr(
+                                                    status_doc, "content_length", 0
+                                                ),
+                                                "created_at": getattr(
+                                                    status_doc,
+                                                    "created_at",
+                                                    datetime.now(
+                                                        timezone.utc
+                                                    ).isoformat(),
+                                                ),
+                                                "updated_at": datetime.now(
+                                                    timezone.utc
+                                                ).isoformat(),
                                                 "file_path": file_path,
-                                                "track_id": getattr(status_doc, "track_id", ""),
+                                                "track_id": getattr(
+                                                    status_doc, "track_id", ""
+                                                ),
                                                 "metadata": {
-                                                    **(getattr(status_doc, "metadata", {}) or {}),
+                                                    **(
+                                                        getattr(
+                                                            status_doc, "metadata", {}
+                                                        )
+                                                        or {}
+                                                    ),
                                                     "processing_start_time": processing_start_time,
                                                     "processing_end_time": processing_end_time,
                                                 },
@@ -2302,7 +2428,9 @@ class ZeRAG:
 
                             # Default False when missing: legacy/corrupted docs (metadata overwritten in old runs) -> skip entity extraction for speed
                             graph_mode = doc_metadata.get("graph_mode", False)
-                            logger.info(f"[Pipeline] {file_path} metadata={doc_metadata} -> graph_mode={graph_mode}")
+                            logger.info(
+                                f"[Pipeline] {file_path} metadata={doc_metadata} -> graph_mode={graph_mode}"
+                            )
 
                             chunk_results = []
                             if graph_mode:
@@ -2314,8 +2442,10 @@ class ZeRAG:
                                 )
                                 chunk_results = await entity_relation_task
                             else:
-                                logger.info(f"Skipping entity extraction for {file_path} (graph_mode=False)")
-                            
+                                logger.info(
+                                    f"Skipping entity extraction for {file_path} (graph_mode=False)"
+                                )
+
                             file_extraction_stage_ok = True
 
                         except Exception as e:
@@ -2419,7 +2549,9 @@ class ZeRAG:
                                         file_path=file_path,
                                     )
                                 else:
-                                    logger.info(f"Skipping graph merge for {file_path} (graph_mode=False)")
+                                    logger.info(
+                                        f"Skipping graph merge for {file_path} (graph_mode=False)"
+                                    )
 
                                 # Record processing end time
                                 processing_end_time = int(time.time())
@@ -3039,7 +3171,9 @@ class ZeRAG:
                 )
                 data_param.mode = "naive"
             else:
-                logger.debug(f"[aquery_data] Using kg_query for mode: {data_param.mode}")
+                logger.debug(
+                    f"[aquery_data] Using kg_query for mode: {data_param.mode}"
+                )
                 query_result = await kg_query(
                     query.strip(),
                     self.chunk_entity_relation_graph,
@@ -3205,6 +3339,8 @@ class ZeRAG:
                             "is_streaming": True,
                         },
                     }
+            elif param.mode in ["local", "global", "hybrid", "mix"]:
+                pass
             else:
                 raise ValueError(f"Unknown mode {param.mode}")
 

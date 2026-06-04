@@ -139,7 +139,7 @@ def create_embedding_func() -> EmbeddingFunc:
             embedding_dim=dim,
             max_token_size=2048,
             model_name=model,
-            func=lambda texts: gemini_embed(
+            func=lambda texts: gemini_embed.func(
                 texts, model=model, api_key=api_key, base_url=config.EMBEDDING_BASE_URL
             ),
         )
