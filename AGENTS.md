@@ -49,6 +49,7 @@ InsightNote consists of three parallel, loosely coupled pillars that form a unif
 *   **Do Not Break Compilation**: Always run TypeScript check and compilation tests before completing your tasks:
     *   Frontend: `cd frontend && npm run build`
     *   Backend (inside `gpu_env`): `cd backend && pytest tests/ -v`
+*   **Strict Version Control & Tagging**: AI agents are **strict co-pilots** and are **NEVER** allowed to create, tag, or push new versions (such as git tags) on their own. Tagging and publishing version releases must be performed **ONLY** when explicitly requested and ordered by the Master Architect (User).
 
 ---
 
