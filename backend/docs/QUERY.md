@@ -86,3 +86,19 @@ This is the flagship hybrid retrieval mode implemented by default in InsightNote
     4.  Feeds the highest-scoring hybrid context into the LLM.
 *   **Pros**: Maximizes context density, performs complex multi-hop reasoning, and animates pulsing light particles along the traversed reasoning path in the 3D graph!
 *   **Cons**: Requires both vector and graph databases to be fully synchronized.
+
+---
+
+## 📊 3. Query Mode Benchmarks (300 Private QA Dataset)
+
+To validate the accuracy, answer quality, and generation latency of the different RAG modes, the system was benchmarked over a **Private Test Dataset of 300 curated QA pairs**.
+
+Below is the benchmark metrics comparison showing retrieval completeness, accuracy indices, and average processing speeds across Naive, Local, Global, and Mix Modes:
+
+![Query Mode Benchmark](images/Query Mode Benchmark.png)
+
+### Key Evaluation Discoveries:
+1.  **Mix Mode (`mix`)** achieves the highest overall accuracy and citation completeness by combining the topological connections of Neo4j with the dense semantic vector search of Qdrant. It is the optimal setting for corporate operations.
+2.  **Naive Mode (`naive`)** maintains the fastest response times (lowest latency) but exhibits higher hallucination rates on multi-hop questions because of its complete lack of relational graph traversal.
+3.  **Local Mode (`local`)** excels at fact-lookup queries involving isolated entities and exact property extractions.
+4.  **Global Mode (`global`)** is the absolute leader for thematic summarizing questions, scanning community summaries to formulate complete high-level thematic abstracts.

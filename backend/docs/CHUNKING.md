@@ -4,7 +4,19 @@ This specification document details the design and implementation of InsightNote
 
 ---
 
-## 📐 1. Bounding Box Coordinates (`bbox`) Structure
+## 📐 1. Graph RAG Architecture & Chunking Methodologies
+
+InsightNote transitions documents from raw flat text chunks to a highly semantic, structural knowledge graph. Below is the architectural diagram mapping the Graph RAG query routing and the three core chunking methodologies (Fixed size, Hierarchical, and Semantic) processed by the ingestion engine:
+
+![Graph RAG Ingestion & Chunking Methods](images/RAG Architecture.png)
+
+*   **Fixed-Size Chunking**: Standard sliding character/token count splitting. It cuts text blindly, breaking sentences and losing visual section hierarchies.
+*   **Hierarchical Chunking**: The core layout-aware method implemented in InsightNote. It utilizes visual bounding box boundaries to group texts logically under parent section headers in a structural tree.
+*   **Semantic Chunking**: Grouping blocks based on semantic similarity transitions, keeping related topics cohesive.
+
+---
+
+## 📐 2. Bounding Box Coordinates (`bbox`) Structure
 
 Standard character-based sliding windows slice texts blindly, breaking paragraphs, splitting table columns, and throwing away visual clues (like bold headers, titles, and section levels). 
 
@@ -26,7 +38,7 @@ InsightNote extracts layout coordinates directly from the structured MinerU mode
 
 ---
 
-## 🧭 2. Reading Order Reconstruction Algorithm
+## 🧭 3. Reading Order Reconstruction Algorithm
 
 For multi-column documents (such as academic publications, financial tables, or resume portfolios), parsing elements sequentially by file stream order results in chaotic, mixed sentences. The backend implements a **spatial-coordinate sorting algorithm** to accurately reconstruct the human reading order:
 
@@ -41,7 +53,7 @@ For each Page:
 
 ---
 
-## 🌳 3. Parent-Child Hierarchical Chunk Tree
+## 🌳 4. Parent-Child Hierarchical Chunk Tree
 
 After sorting, the engine structures the reading stream as a **Hierarchical Tree** inside Neo4j, establishing parent-child containment edges instead of flat, disconnected text chunk arrays:
 
