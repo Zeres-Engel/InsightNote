@@ -72,6 +72,21 @@ pytest backend/tests/unit/test_insightnote_routes.py -v
     docker compose up -d frontend
     ```
 
+### 3. E2E Pipeline Verification
+Before pushing changes or submitting a PR, always execute the full pipeline storage verification:
+```bash
+C:/Users/nguye/anaconda3/envs/gpu_env/python.exe scripts/verify_backend_pipeline.py
+```
+
+---
+
+## 🌿 Git Flow Branching & Tagging Policy
+
+*   All active work, feature upgrades, and debugging must occur strictly on the `develop` branch.
+*   The `release` branch is reserved for pre-release validation and staging.
+*   Stable compiled production code resides on `main`.
+*   Creating/tagging releases (such as `1.0.0` tags) must **only** be performed when explicitly requested by the Master Architect (User).
+
 ---
 
 ## 🛡 High-Fidelity Fallback Policy (Sandbox Mode)

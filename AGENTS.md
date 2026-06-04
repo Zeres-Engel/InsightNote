@@ -53,6 +53,18 @@ InsightNote consists of three parallel, loosely coupled pillars that form a unif
 
 ---
 
+## 🌿 Git Flow & Branch Management Rules
+
+*   **Active Development Branch (`develop`)**: All active development, feature building, and debugging must occur **strictly** on the `develop` branch.
+*   **Release & Staging Branch (`release`)**: The `release` branch is dedicated strictly to staging, environment testing, and preparing stable releases before merging to `main`.
+*   **Production Branch (`main`)**: The `main` branch contains strictly compiled, tested, and fully stable production releases. Merges to `main` must occur only via `develop -> release -> main` workflow.
+*   **Thorough Testing Before Push/PR**: No code is to be pushed or integrated unless it has undergone thorough local validation:
+    1.  Frontend build is validated successfully: `cd frontend && npm run build`
+    2.  All backend tests pass cleanly in `gpu_env`: `cd backend && pytest tests/ -v`
+    3.  RAG E2E pipeline verification scripts run PASS: `C:/Users/nguye/anaconda3/envs/gpu_env/python.exe scripts/verify_backend_pipeline.py`
+
+---
+
 ## 📜 Tool Index Cheat-sheet
 
 When working, choose the most direct tool:
