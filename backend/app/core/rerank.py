@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import os
+from typing import Any, Dict, List, Optional, Tuple
+
 import aiohttp
-from typing import Any, List, Dict, Optional, Tuple
+from dotenv import load_dotenv
 from tenacity import (
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
 )
-from .utils import logger
 
-from dotenv import load_dotenv
+from .utils import logger
 
 # use the .env that is inside the current folder
 # allows to use different .env file for each zerag instance
@@ -511,6 +512,113 @@ async def ali_rerank(
         response_format="aliyun",
         request_format="aliyun",
     )
+
+
+async def google_vertex_rerank(
+    query: str,
+    documents: List[str],
+    top_n: Optional[int] = None,
+    project_id: Optional[str] = None,
+    credentials_json_path: Optional[str] = None,
+    model: str = "semantic-ranker-default-004",
+) -> List[Dict[str, Any]]:
+    """
+    Rerank documents using Google Vertex AI Ranking API (Discovery Engine).
+
+    Args:
+        query: The search query
+        documents: List of strings to rerank
+        top_n: Number of top results to return
+        project_id: GCP Project ID
+        credentials_json_path: Path to GCP Service Account credentials JSON file
+        model: semantic-ranker-default-004 or semantic-ranker-fast-004
+
+    Returns:
+        List of dictionary of ["index": int, "relevance_score": float]
+    """
+    import os
+
+    import httpx
+
+    # 1. Resolve GCP Project ID
+    gcp_project = (
+        project_id or os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT_ID")
+    )
+    if not gcp_project:
+        logger.error("GCP Project ID not found for Google Vertex Reranker!")
+        raise ValueError(
+            "GCP Project ID must be provided or configured as GOOGLE_CLOUD_PROJECT in environment."
+        )
+
+    # 2. Resolve credentials & generate Access Token
+    cred_path = credentials_json_path or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+
+    if not cred_path or not os.path.exists(cred_path):
+        logger.error("GCP Credentials JSON file not found for Google Vertex Reranker!")
+        raise ValueError(
+            "GOOGLE_APPLICATION_CREDENTIALS must point to a valid Service Account JSON file."
+        )
+
+    try:
+        from google.auth.transport.requests import Request as AuthRequest
+        from google.oauth2 import service_account
+
+        scoped_credentials = service_account.Credentials.from_service_account_file(
+            cred_path, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        auth_request = AuthRequest()
+        scoped_credentials.refresh(auth_request)
+        access_token = scoped_credentials.token
+    except Exception as e:
+        logger.error(f"Failed to generate Google GCP OAuth2 Token: {e}")
+        raise RuntimeError(f"GCP Authentication failed: {e}")
+
+    # 3. Construct Discovery Engine API Request
+    url = f"https://discoveryengine.googleapis.com/v1alpha/projects/{gcp_project}/locations/global/rankingConfigs/default_ranking_config:rank"
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+    }
+
+    records = []
+    for i, doc in enumerate(documents):
+        records.append({"id": str(i), "content": doc})
+
+    data = {"model": model, "query": query, "records": records}
+
+    if top_n is not None:
+        data["top_n"] = top_n
+
+    # 4. Perform async HTTP request
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=headers, json=data, timeout=30.0)
+            if response.status_code != 200:
+                logger.error(
+                    f"Google Vertex AI Reranker API error: {response.status_code} - {response.text}"
+                )
+                raise RuntimeError(
+                    f"Vertex AI API returned status {response.status_code}: {response.text}"
+                )
+
+            res_data = response.json()
+
+            # 5. Parse and standardize results
+            results = []
+            raw_results = res_data.get("results", [])
+            for item in raw_results:
+                record_id = item.get("id")
+                score = item.get("score", 0.0)
+                results.append(
+                    {"index": int(record_id), "relevance_score": float(score)}
+                )
+
+            return results
+
+    except Exception as e:
+        logger.error(f"Error calling Vertex AI Ranking API: {e}")
+        raise e
 
 
 """Please run this test as a module:

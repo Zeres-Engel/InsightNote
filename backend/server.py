@@ -151,7 +151,9 @@ def create_rerank_func() -> Callable:
     api_key = config.RERANKER_API_KEY
     base_url = config.RERANKER_BASE_URL
 
-    if not model or not base_url:
+    if not model or (
+        not base_url and binding not in ("google", "vertex", "google_vertex")
+    ):
         logger.info("Reranker is not configured (model or base_url missing). Skipping.")
         return None
 
@@ -197,6 +199,20 @@ def create_rerank_func() -> Callable:
             )
 
         return a_rerank
+    elif binding in ("google", "vertex", "google_vertex"):
+        from app.core.rerank import google_vertex_rerank
+
+        async def g_rerank(query: str, documents: List[str], **kwargs):
+            return await google_vertex_rerank(
+                query=query,
+                documents=documents,
+                model=model,
+                project_id=os.getenv("GCP_PROJECT_ID"),
+                credentials_json_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+                **kwargs,
+            )
+
+        return g_rerank
 
     logger.warning(f"Unsupported Reranker binding: {binding}")
     return None

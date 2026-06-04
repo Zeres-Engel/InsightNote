@@ -896,6 +896,17 @@ def create_insightnote_routes(
                     or "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank",
                     api_key=api_key,
                 )
+            elif binding in ("google", "vertex", "google_vertex"):
+                from app.core.rerank import google_vertex_rerank
+
+                raw_results = await google_vertex_rerank(
+                    query=request.query,
+                    documents=request.documents,
+                    top_n=request.top_n,
+                    model=model or "semantic-ranker-default-004",
+                    project_id=os.getenv("GCP_PROJECT_ID"),
+                    credentials_json_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+                )
             else:
                 raise HTTPException(
                     status_code=400, detail=f"Unsupported reranker binding: {binding}"
