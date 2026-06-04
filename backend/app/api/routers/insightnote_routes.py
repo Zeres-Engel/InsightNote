@@ -162,6 +162,36 @@ class PipelineJobResponse(BaseModel):
     steps: List[PipelineStep]
 
 
+class RerankRequest(BaseModel):
+    query: str = Field(..., description="The query to rank documents against.")
+    documents: List[str] = Field(
+        ..., description="List of document texts or chunks to rerank."
+    )
+    top_n: Optional[int] = Field(None, description="Number of top results to return.")
+    binding: Optional[str] = Field(
+        None, description="Rerank provider binding: jina | cohere | ali"
+    )
+    model: Optional[str] = Field(None, description="Rerank model name override.")
+    base_url: Optional[str] = Field(None, description="Rerank API endpoint override.")
+    api_key: Optional[str] = Field(None, description="API key override.")
+
+
+class RerankResultItem(BaseModel):
+    index: int = Field(
+        ..., description="The original index of the document in the request list."
+    )
+    relevance_score: float = Field(
+        ..., description="The calculated relevance score of the document."
+    )
+    text: Optional[str] = Field(None, description="The content of the document.")
+
+
+class RerankResponse(BaseModel):
+    results: List[RerankResultItem] = Field(
+        ..., description="List of reranked results."
+    )
+
+
 # --- HIGH-FIDELITY MOCK DATABASES ---
 
 # In-memory notebook dashboard. These are presentation cards only; every card
@@ -796,6 +826,103 @@ def create_insightnote_routes(
     @router.get("/health")
     async def get_health():
         return HealthResponse()
+
+    @router.post("/rerank", response_model=RerankResponse)
+    async def rerank_documents(request: RerankRequest):
+        """Rerank documents dynamically using the specified provider or configured defaults."""
+        try:
+            # 1. Resolve binding
+            binding = request.binding
+            if not binding:
+                if rag.rerank_model_func:
+                    func_name = getattr(rag.rerank_model_func, "__name__", "")
+                    if "cohere" in func_name:
+                        binding = "cohere"
+                    elif "ali" in func_name:
+                        binding = "ali"
+                    else:
+                        binding = "jina"
+                else:
+                    binding = "jina"
+
+            binding = binding.lower()
+
+            # 2. Resolve model and other configurations
+            from config import config
+
+            model = request.model
+            base_url = request.base_url
+            api_key = request.api_key
+
+            if not model:
+                model = config.RERANKER_MODEL
+            if not base_url:
+                base_url = config.RERANKER_BASE_URL
+            if not api_key:
+                api_key = config.RERANKER_API_KEY or config.LLM_API_KEY
+
+            # 3. Call the appropriate reranker function
+            if binding == "jina":
+                from app.core.rerank import jina_rerank
+
+                raw_results = await jina_rerank(
+                    query=request.query,
+                    documents=request.documents,
+                    top_n=request.top_n,
+                    model=model or "jina-reranker-v2-base-multilingual",
+                    base_url=base_url or "https://api.jina.ai/v1/rerank",
+                    api_key=api_key,
+                )
+            elif binding == "cohere":
+                from app.core.rerank import cohere_rerank
+
+                raw_results = await cohere_rerank(
+                    query=request.query,
+                    documents=request.documents,
+                    top_n=request.top_n,
+                    model=model or "rerank-v3.5",
+                    base_url=base_url or "https://api.cohere.com/v2/rerank",
+                    api_key=api_key,
+                )
+            elif binding == "ali":
+                from app.core.rerank import ali_rerank
+
+                raw_results = await ali_rerank(
+                    query=request.query,
+                    documents=request.documents,
+                    top_n=request.top_n,
+                    model=model or "gte-rerank-v2",
+                    base_url=base_url
+                    or "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank",
+                    api_key=api_key,
+                )
+            else:
+                raise HTTPException(
+                    status_code=400, detail=f"Unsupported reranker binding: {binding}"
+                )
+
+            # 4. Construct response items
+            results = []
+            for item in raw_results:
+                idx = item["index"]
+                text_content = (
+                    request.documents[idx]
+                    if 0 <= idx < len(request.documents)
+                    else None
+                )
+                results.append(
+                    RerankResultItem(
+                        index=idx,
+                        relevance_score=item["relevance_score"],
+                        text=text_content,
+                    )
+                )
+
+            return RerankResponse(results=results)
+
+        except Exception as e:
+            logger.error(f"Error during reranking endpoint execution: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
 
     # --- MULTI-NOTEBOOK ENDPOINTS ---
 

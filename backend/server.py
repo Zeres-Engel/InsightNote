@@ -169,6 +169,34 @@ def create_rerank_func() -> Callable:
             )
 
         return v98_rerank
+    elif binding == "cohere":
+        from app.core.rerank import cohere_rerank
+
+        async def c_rerank(query: str, documents: List[str], **kwargs):
+            return await cohere_rerank(
+                query=query,
+                documents=documents,
+                model=model,
+                api_key=api_key,
+                base_url=base_url,
+                **kwargs,
+            )
+
+        return c_rerank
+    elif binding == "ali":
+        from app.core.rerank import ali_rerank
+
+        async def a_rerank(query: str, documents: List[str], **kwargs):
+            return await ali_rerank(
+                query=query,
+                documents=documents,
+                model=model,
+                api_key=api_key,
+                base_url=base_url,
+                **kwargs,
+            )
+
+        return a_rerank
 
     logger.warning(f"Unsupported Reranker binding: {binding}")
     return None
