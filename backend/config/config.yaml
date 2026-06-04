@@ -5,25 +5,25 @@ server:
   working_dir: "./rag_storage"
   workspace: "default"
 
-# LLM Configuration (v98store - qwen-plus)
+# LLM Configuration
 llm:
-  binding: "openai"
-  model: "qwen-plus"
+  binding: "${LLM_BINDING:-openai}"
+  model: "${LLM_MODEL:-qwen-plus}"
   api_key: "${OPENAI_API_KEY}"
   base_url: "${LLM_BASE_URL:-https://v98store.com/v1}"
 
-# Embedding Configuration (v98store - text-embedding-3-small, 1536d)
+# Embedding Configuration
 embedding:
-  binding: "openai"
-  model: "text-embedding-3-small"
+  binding: "${EMBEDDING_BINDING:-openai}"
+  model: "${EMBEDDING_MODEL:-text-embedding-3-small}"
   api_key: "${OPENAI_API_KEY}"
   base_url: "${EMBEDDING_BASE_URL:-https://v98store.com/v1}"
 
-# Reranker Configuration (v98store - BAAI/bge-reranker-v2-m3)
+# Reranker Configuration
 reranker:
-  binding: "jina"
-  model: "BAAI/bge-reranker-v2-m3"
-  base_url: "${LLM_BASE_URL:-https://v98store.com/v1}/rerank"
+  binding: "${RERANKER_BINDING:-jina}"
+  model: "${RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}"
+  base_url: "${RERANKER_BASE_URL:-https://v98store.com/v1/rerank}"
   api_key: "${OPENAI_API_KEY}"
   max_tokens: 4096
 
