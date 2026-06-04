@@ -28,6 +28,18 @@ InsightNote is structured into a 2-tier application model with three main databa
 
 ---
 
+## 🧭 Code Graph Navigation with Grapuco
+
+This project is indexed and analyzed with **Grapuco (Code Graph)**. When exploring the codebase or starting a development run, **never guess or perform brute-force searches**. Leverage the available Grapuco MCP tools:
+
+1.  **Initialize Project Workspace**: Run the `bootstrap` tool once at session startup using the `repositoryId` or `workspaceId` found inside `.grapuco/config.json` to properly map tools, skills, and related repositories.
+2.  **Search Symbols**: Use `grapuco_search_code` to find exact classes, FastAPI routers, React components, or core database handler functions.
+3.  **Inspect Symbol Context**: Call `get_symbol_context` or `get_dependencies` to map calling chains, heritage structures, and data flows before deep edits.
+4.  **Verify Data Movements**: Run `get_data_flows` to trace precise endpoint logic (e.g., from frontend API calls down to Neo4j/Qdrant queries).
+5.  **Assess Edit Risk**: Evaluate blast radius using `get_impact_analysis` or `blast_radius` on target files to avoid regressions across parallel modules.
+
+---
+
 ## 🔌 API Endpoints Contract
 
 All API communications are brokered through these standard endpoints:
