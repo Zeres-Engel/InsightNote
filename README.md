@@ -1,4 +1,4 @@
-# InsightNote — Connected GraphRAG Knowledge Workspace
+# 🎨 InsightNote — Connected GraphRAG Knowledge Workspace
 
 > Transform documents into connected knowledge.
 
@@ -8,20 +8,40 @@ Developed using your existing high-performance **ZeRAG** (Zero-effort Retrieval-
 
 ---
 
+## 📸 Visual Previews
+
+### 1. Redesigned Glassmorphic Dashboard
+Our premium landing dashboard provides clear, high-tech metrics summarizing Active Notebooks, Ingested Documents, and Live Database sync metrics.
+![InsightNote Redesigned Dashboard](docs/images/dashboard.png)
+
+### 2. The 3-Column Interactive Workspace
+Ingest files on the left, Q&A with conversational LLM reasoning in the middle, and watch your 3D Knowledge Graph uon-luon (curve and glow) on the right!
+![InsightNote 3-Column Workspace with 3D Graph](docs/images/workspace.png)
+
+### 3. Interlocking 3D Navigation Guide
+Rotate, Pan, Zoom, and click nodes smoothly while taking advantage of our helpful built-in navigation guide overlay.
+![InsightNote 3D Navigation Guide](docs/images/navigation_guide.png)
+
+---
+
 ## 🚀 Key Features
 
 *   **Left Column (Sources / Notebook Panel)**:
     *   Add URLs (with automated server-side scraping).
     *   Add raw Text Notes (saved and indexed in the background).
     *   PDF Drag & Drop or file upload (processed by the real MultiRAG OCR/MinerU parser pipeline).
+    *   **Delete Document 🆕**: Click the red trash icon next to any document to cleanly remove it from the index list (and databases).
     *   Source index displaying document names, ingest status, and graph metadata (e.g. entity & chunk count).
 *   **Middle Column (ChatGPT-style Chat & Copilot)**:
     *   Responsive chat thread with streaming capabilities and markdown rendering.
+    *   **Real LLM & RAG query integration 🆕**: All preset queries and custom messages are fed directly into the live LLM + ZeRAG engine for a fully dynamic query experience.
     *   **Grounded Citations**: Source cards appear below answers, showing exactly where facts are retrieved from.
     *   **Collapsible Retrieval Steps**: Explains precisely what the GraphRAG pipeline did (entity lookups, semantic connections found, vector search results, and reranking thresholds).
     *   **Preset Demo Pills**: 5 preloaded insurance-domain questions to showcase the full GraphRAG traversal in 5 seconds.
 *   **Right Column (Knowledge Graph Panel)**:
     *   **3D WebGL Force Graph**: Fully interactive, panning, zooming, and dragging.
+    *   **Auto slow-rotation camera 🆕**: Mapped using native ThreeJS OrbitControls to rotate the graph slowly in 3D space to provide a live, dynamic presentation.
+    *   **ResizeObserver Integration 🆕**: Auto-resizes the 3D canvas dynamically to its parent column width, centering all nodes perfectly inside the visible panel area.
     *   **Active Traversal Highlighting**: Asking a question highlights the exact retrieval path in gold/orange. Non-path nodes are dimmed, and light particles animate down relationships!
     *   **Properties Inspector**: Clicking a node slides up a properties tray displaying custom JSON attributes.
     *   **Live Search**: Instantly find nodes and focus the 3D camera onto them.
@@ -39,9 +59,8 @@ Developed using your existing high-performance **ZeRAG** (Zero-effort Retrieval-
 │ Add URL               │ ChatGPT-style messages           │ 3D Neo4j Graph     │
 │ Add Text Note         │ Citations                        │                    │
 │ Upload PDF            │ Retrieval steps                  │ Highlighted path   │
-│                       │                                 │ Node details       │
-│ Source list           │ Composer                         │ Graph toolbar      │
-│ Entity list           │                                 │                    │
+│ Trash bin (Delete)    │ Composer                         │ Node details       │
+│                       │                                 │ Navigation Guide   │
 └───────────────────────┴─────────────────────────────────┴────────────────────┘
 ```
 
@@ -49,8 +68,17 @@ Developed using your existing high-performance **ZeRAG** (Zero-effort Retrieval-
 
 ## 🛠 Tech Stack
 
-*   **Frontend**: React (Vite) + TypeScript + Tailwind CSS + Lucide Icons + Framer Motion + `react-force-graph-3d` (WebGL/Three.js).
+*   **Frontend**: React (Vite) + TypeScript + Tailwind CSS + Lucide Icons + Framer Motion + `react-force-graph-3d` (WebGL/Three.js@0.184.0).
 *   **Backend**: FastAPI + Pydantic + MongoDB (Doc Status & Metadata) + Neo4j (GraphDB) + Qdrant (VectorDB) + BAAI/bge-reranker-v2-m3.
+
+---
+
+## 📖 Sub-Folder Documentation
+
+For deep development configurations and architecture details, refer to:
+*   📁 **[`frontend/docs/API_CONTRACT.md`](frontend/docs/API_CONTRACT.md)**: Full API specifications (parameters, payloads, codes).
+*   📁 **[`frontend/docs/DEVELOPMENT_GUIDE.md`](frontend/docs/DEVELOPMENT_GUIDE.md)**: Frontend components layout, state bindings, and WebGL setups.
+*   📁 **[`backend/docs/BACKEND_GUIDE.md`](backend/docs/BACKEND_GUIDE.md)**: Backend directory structure, routing schemas, and ZeRAG core.
 
 ---
 
@@ -71,7 +99,7 @@ OPENAI_API_KEY=sk-your-openai-key-here
 ### 2. Launch the Application Stack
 Run the docker-compose build and start command:
 ```bash
-docker compose up --build
+docker compose up -d --build
 ```
 
 ### 3. Open your browser
@@ -110,7 +138,7 @@ If you prefer to run services individually for debugging:
    ```bash
    npm run dev
    ```
-3. Open `http://localhost:5173` in your browser.
+3. Open `http://localhost:3000` in your browser.
 
 ---
 
