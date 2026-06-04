@@ -39,7 +39,7 @@ infrastructure:
   mongodb:
     image: "mongo:latest"
     uri: "${MONGO_URI:-mongodb://localhost:27017}"
-    database: "${MONGO_DATABASE:-cosigmadoc}"
+    database: "${MONGO_DATABASE:-insightnote}"
     container_port: 27017
     host_port: 27017
     volume_name: "mongo_data"

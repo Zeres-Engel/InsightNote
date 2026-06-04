@@ -1,6 +1,6 @@
-# CosigmaDoc - Backend Documentation
+# InsightNote - Backend Documentation
 
-The backend of CosigmaDoc is a high-performance, asynchronous REST API built with FastAPI. It handles document ingestion, orchestration of the Retrieval-Augmented Generation (RAG) pipeline, and communication with the LLM.
+The backend of InsightNote is a high-performance, asynchronous REST API built with FastAPI. It handles document ingestion, orchestration of the Retrieval-Augmented Generation (RAG) pipeline, and communication with the LLM.
 
 ## 🏗 Architecture
 

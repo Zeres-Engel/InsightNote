@@ -1,6 +1,6 @@
-# CosigmaDoc Backend (ZeRAG)
+# InsightNote Backend (ZeRAG)
 
-CosigmaDoc is a powerful Retrieval-Augmented Generation (RAG) system. This repository contains the **ZeRAG** (Zero-effort Retrieval-Augmented Generation) backend, which integrates Knowledge Graphs and Vector Databases for state-of-the-art context retrieval.
+InsightNote is a powerful Retrieval-Augmented Generation (RAG) system. This repository contains the **ZeRAG** (Zero-effort Retrieval-Augmented Generation) backend, which integrates Knowledge Graphs and Vector Databases for state-of-the-art context retrieval.
 
 ## Table of Contents
 - [Overview](#overview)
@@ -41,9 +41,9 @@ Use these instructions if you need to wipe all processed data and LLM caches to 
 ### Volume Configuration
 | Service | Docker Volume Name | Data Stored |
 |---------|--------------------|-------------|
-| MongoDB | `cosigmadoc_mongo_data` | Metadata, Doc Status, LLM Cache |
-| Neo4j   | `cosigmadoc_neo4j_data` | Knowledge Graph (Entities & Relations) |
-| Qdrant  | `cosigmadoc_qdrant_data" | Vector Embeddings (Chunks & Entities) |
+| MongoDB | `insightnote_mongo_data` | Metadata, Doc Status, LLM Cache |
+| Neo4j   | `insightnote_neo4j_data` | Knowledge Graph (Entities & Relations) |
+| Qdrant  | `insightnote_qdrant_data` | Vector Embeddings (Chunks & Entities) |
 
 ### Reset Procedures
 
@@ -58,7 +58,7 @@ If you only want to clear specific data (e.g., only the Knowledge Graph):
 ```bash
 # Example: Reset Neo4j
 docker-compose stop neo4j
-docker volume rm cosigmadoc_neo4j_data
+docker volume rm insightnote_neo4j_data
 docker-compose up -d neo4j
 ```
 
@@ -72,4 +72,4 @@ If you are running the backend locally, you may also want to clear document stor
 - [API Specification](http://localhost:8000/docs) (when running)
 
 ---
-© 2026 CosigmaDoc Team
+© 2026 InsightNote Team

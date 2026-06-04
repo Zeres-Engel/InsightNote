@@ -30,7 +30,7 @@ services:
       - HOST=0.0.0.0
       - PORT=8000
       - MONGO_URI=mongodb://mongodb:27017
-      - MONGO_DATABASE=cosigmadoc
+      - MONGO_DATABASE=insightnote
       - NEO4J_URI=bolt://neo4j:7687
       - NEO4J_USER=neo4j
       - NEO4J_PASSWORD=password
