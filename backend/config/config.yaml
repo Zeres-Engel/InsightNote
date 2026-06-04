@@ -9,14 +9,14 @@ server:
 llm:
   binding: "${LLM_BINDING:-openai}"
   model: "${LLM_MODEL:-qwen-plus}"
-  api_key: "${OPENAI_API_KEY}"
+  api_key: "${GEMINI_API_KEY:-${OPENAI_API_KEY}}"
   base_url: "${LLM_BASE_URL:-https://v98store.com/v1}"
 
 # Embedding Configuration
 embedding:
   binding: "${EMBEDDING_BINDING:-openai}"
   model: "${EMBEDDING_MODEL:-text-embedding-3-small}"
-  api_key: "${OPENAI_API_KEY}"
+  api_key: "${GEMINI_API_KEY:-${OPENAI_API_KEY}}"
   base_url: "${EMBEDDING_BASE_URL:-https://v98store.com/v1}"
 
 # Reranker Configuration
@@ -24,7 +24,7 @@ reranker:
   binding: "${RERANKER_BINDING:-jina}"
   model: "${RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}"
   base_url: "${RERANKER_BASE_URL:-https://v98store.com/v1/rerank}"
-  api_key: "${OPENAI_API_KEY}"
+  api_key: "${RERANKER_API_KEY:-${OPENAI_API_KEY}}"
   max_tokens: 4096
 
 # Storage Backends Selection

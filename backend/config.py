@@ -158,7 +158,12 @@ class Config:
                 var_name, default_value if default_value is not None else match.group(0)
             )
 
-        return pattern.sub(replacer, value)
+        # Resolve nested environment variables recursively
+        prev = None
+        while prev != value:
+            prev = value
+            value = pattern.sub(replacer, value)
+        return value
 
 
 # Single instance of config
