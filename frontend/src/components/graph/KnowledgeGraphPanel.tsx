@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
-import ForceGraph3D from 'react-force-graph-3d';
+import React, { useState, useRef, useEffect, useMemo } from "react";
+import ForceGraph3D from "react-force-graph-3d";
 import {
   Maximize2,
   Search,
@@ -10,9 +10,14 @@ import {
   GitCommit,
   X,
   HelpCircle,
-  Network
-} from 'lucide-react';
-import { GraphNode, GraphLink, GraphPath, NodeDetailsResponse } from '../../lib/types';
+  Network,
+} from "lucide-react";
+import {
+  GraphNode,
+  GraphLink,
+  GraphPath,
+  NodeDetailsResponse,
+} from "../../lib/types";
 
 interface KnowledgeGraphPanelProps {
   graphData: { nodes: GraphNode[]; links: GraphLink[] };
@@ -26,18 +31,49 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
   onNodeClick,
 }) => {
   const fgRef = useRef<any>();
-  const [selectedNode, setSelectedNode] = useState<NodeDetailsResponse | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dimensions, setDimensions] = useState({ width: 480, height: 600 });
+  const [selectedNode, setSelectedNode] = useState<NodeDetailsResponse | null>(
+    null,
+  );
+  const [searchQuery, setSearchQuery] = useState("");
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+
+  // Auto slow rotate camera for extremely cool, living presentation
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (fgRef.current) {
+        const controls = fgRef.current.controls();
+        if (controls) {
+          controls.autoRotate = true;
+          controls.autoRotateSpeed = 0.5; // slow, gentle, buttery-smooth rotation
+        }
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [graphData]);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      for (let entry of entries) {
+        const { width, height } = entry.contentRect;
+        setDimensions({ width, height });
+      }
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
 
   // Group node colors
   const groupColors: Record<string, string> = {
-    document: '#10b981', // emerald
-    clause: '#3b82f6',    // blue
-    concept: '#a855f7',   // purple
-    process: '#eab308',   // yellow
-    rule: '#ef4444',      // red
-    person: '#ec4899',    // pink
+    document: "#10b981", // emerald
+    clause: "#3b82f6", // blue
+    concept: "#a855f7", // purple
+    process: "#eab308", // yellow
+    rule: "#ef4444", // red
+    person: "#ec4899", // pink
   };
 
   // Node Click handler
@@ -52,9 +88,13 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
         const distance = 80;
         const distRatio = 1 + distance / Math.hypot(node.x, node.y, node.z);
         fgRef.current.cameraPosition(
-          { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio },
+          {
+            x: node.x * distRatio,
+            y: node.y * distRatio,
+            z: node.z * distRatio,
+          },
           node, // lookAt
-          2000  // transition ms
+          2000, // transition ms
         );
       }
     } catch (e) {
@@ -69,7 +109,9 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
     if (!searchQuery.trim()) return graphData.nodes;
     const query = searchQuery.toLowerCase();
     return graphData.nodes.filter(
-      n => n.label.toLowerCase().includes(query) || n.type.toLowerCase().includes(query)
+      (n) =>
+        n.label.toLowerCase().includes(query) ||
+        n.type.toLowerCase().includes(query),
     );
   }, [graphData.nodes, searchQuery]);
 
@@ -77,20 +119,20 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
   const processedData = useMemo(() => {
     const hasActiveHighlight = highlightPath.node_ids.length > 0;
 
-    const nodes = graphData.nodes.map(node => {
+    const nodes = graphData.nodes.map((node) => {
       const isHighlighted = highlightPath.node_ids.includes(node.id);
 
       // Compute color
-      let color = groupColors[node.group] || '#94a3b8';
+      let color = groupColors[node.group] || "#94a3b8";
       let val = 1.5; // default size value
 
       if (hasActiveHighlight) {
         if (isHighlighted) {
-          color = '#fbbf24'; // Gold / Orange highlight color
-          val = 3.5;         // Grow node
+          color = "#fbbf24"; // Gold / Orange highlight color
+          val = 3.5; // Grow node
         } else {
           // Dim non-highlighted nodes
-          color = 'rgba(51, 65, 85, 0.25)';
+          color = "rgba(51, 65, 85, 0.25)";
           val = 1.0;
         }
       }
@@ -98,25 +140,27 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
       return {
         ...node,
         color,
-        val
+        val,
       };
     });
 
-    const links = graphData.links.map(link => {
+    const links = graphData.links.map((link) => {
       // link.source/target can be objects if react-force-graph has processed them, or strings
-      const sourceId = typeof link.source === 'object' ? (link.source as any).id : link.source;
-      const targetId = typeof link.target === 'object' ? (link.target as any).id : link.target;
+      const sourceId =
+        typeof link.source === "object" ? (link.source as any).id : link.source;
+      const targetId =
+        typeof link.target === "object" ? (link.target as any).id : link.target;
       const isHighlighted = highlightPath.link_ids.includes(link.id);
 
-      let color = '#475569'; // default slate-600
+      let color = "#475569"; // default slate-600
       let width = 1.0;
 
       if (hasActiveHighlight) {
         if (isHighlighted) {
-          color = '#f59e0b'; // amber
+          color = "#f59e0b"; // amber
           width = 3.5;
         } else {
-          color = 'rgba(30, 41, 59, 0.1)';
+          color = "rgba(30, 41, 59, 0.1)";
           width = 0.5;
         }
       }
@@ -124,7 +168,7 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
       return {
         ...link,
         color,
-        width
+        width,
       };
     });
 
@@ -137,12 +181,14 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
     if (!searchQuery.trim()) return;
 
     // Find first matching node
-    const match = graphData.nodes.find(
-      n => n.label.toLowerCase().includes(searchQuery.toLowerCase())
+    const match = graphData.nodes.find((n) =>
+      n.label.toLowerCase().includes(searchQuery.toLowerCase()),
     );
     if (match && fgRef.current) {
       // Find rendered node in forcegraph to get coordinates
-      const renderedNode = processedData.nodes.find((n: any) => n.id === match.id);
+      const renderedNode = processedData.nodes.find(
+        (n: any) => n.id === match.id,
+      );
       if (renderedNode) {
         handleNodeClick(renderedNode);
       }
@@ -153,18 +199,30 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
   const zoomIn = () => {
     if (!fgRef.current) return;
     const { x, y, z } = fgRef.current.cameraPosition();
-    fgRef.current.cameraPosition({ x: x * 0.8, y: y * 0.8, z: z * 0.8 }, null, 500);
+    fgRef.current.cameraPosition(
+      { x: x * 0.8, y: y * 0.8, z: z * 0.8 },
+      null,
+      500,
+    );
   };
 
   const zoomOut = () => {
     if (!fgRef.current) return;
     const { x, y, z } = fgRef.current.cameraPosition();
-    fgRef.current.cameraPosition({ x: x * 1.25, y: y * 1.25, z: z * 1.25 }, null, 500);
+    fgRef.current.cameraPosition(
+      { x: x * 1.25, y: y * 1.25, z: z * 1.25 },
+      null,
+      500,
+    );
   };
 
   const resetCamera = () => {
     if (!fgRef.current) return;
-    fgRef.current.cameraPosition({ x: 0, y: 0, z: 250 }, { x: 0, y: 0, z: 0 }, 1000);
+    fgRef.current.cameraPosition(
+      { x: 0, y: 0, z: 250 },
+      { x: 0, y: 0, z: 0 },
+      1000,
+    );
     setSelectedNode(null);
   };
 
@@ -174,12 +232,14 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
       // Find coordinates of nodes in path
       setTimeout(() => {
         const renderedNodes = processedData.nodes.filter((n: any) =>
-          highlightPath.node_ids.includes(n.id)
+          highlightPath.node_ids.includes(n.id),
         );
 
         if (renderedNodes.length > 0) {
           // Compute bounding box or average center
-          let sumX = 0, sumY = 0, sumZ = 0;
+          let sumX = 0,
+            sumY = 0,
+            sumZ = 0;
           renderedNodes.forEach((n: any) => {
             sumX += n.x || 0;
             sumY += n.y || 0;
@@ -192,7 +252,7 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
           fgRef.current.cameraPosition(
             { x: avgX, y: avgY, z: avgZ + 120 },
             { x: avgX, y: avgY, z: avgZ },
-            1800
+            1800,
           );
         }
       }, 400);
@@ -211,7 +271,10 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
         </div>
 
         {/* Node Search Bar */}
-        <form onSubmit={handleSearchSubmit} className="relative max-w-[200px] flex-1">
+        <form
+          onSubmit={handleSearchSubmit}
+          className="relative max-w-[200px] flex-1"
+        >
           <Search className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-500" />
           <input
             type="text"
@@ -224,19 +287,20 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
       </div>
 
       {/* Main Graph Area */}
-      <div className="flex-1 w-full bg-slate-950 relative">
+      <div ref={containerRef} className="flex-1 w-full bg-slate-950 relative">
         <ForceGraph3D
           ref={fgRef}
+          width={dimensions.width}
+          height={dimensions.height}
           graphData={processedData}
           backgroundColor="#0a0a0b"
           showNavInfo={false}
-
           // Nodes
           nodeLabel={(node: any) => `
             <div style="background: rgba(15, 23, 42, 0.95); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 8px; padding: 8px 12px; font-family: sans-serif; box-shadow: 0 4px 12px rgba(0,0,0,0.5);">
               <div style="font-weight: bold; font-size: 13px; color: #f8fafc; margin-bottom: 2px;">${node.label}</div>
               <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; color: #6366f1;">${node.type}</div>
-              ${node.properties?.summary ? `<div style="font-size: 11px; color: #94a3b8; margin-top: 4px; max-width: 200px; white-space: normal; line-height: 1.4;">${node.properties.summary}</div>` : ''}
+              ${node.properties?.summary ? `<div style="font-size: 11px; color: #94a3b8; margin-top: 4px; max-width: 200px; white-space: normal; line-height: 1.4;">${node.properties.summary}</div>` : ""}
             </div>
           `}
           nodeColor={(node: any) => node.color}
@@ -248,7 +312,6 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
             node.fy = node.y;
             node.fz = node.z;
           }}
-
           // Links
           linkLabel={(link: any) => `
             <div style="background: rgba(15, 23, 42, 0.95); border: 1px solid #475569; border-radius: 4px; padding: 4px 8px; font-size: 10px; font-weight: bold; color: #94a3b8; font-family: sans-serif;">
@@ -257,12 +320,19 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
           `}
           linkColor={(link: any) => link.color}
           linkWidth={(link: any) => link.width}
-
+          linkCurvature={0.15}
+          linkDirectionalArrowLength={3.5}
+          linkDirectionalArrowColor={(link: any) => link.color}
+          linkDirectionalArrowRelPos={1.0}
           // Highlighting particles! pulsing directional dots moving on paths
-          linkDirectionalParticles={(link: any) => highlightPath.link_ids.includes(link.id) ? 5 : 0}
-          linkDirectionalParticleWidth={(link: any) => highlightPath.link_ids.includes(link.id) ? 3.0 : 0}
+          linkDirectionalParticles={(link: any) =>
+            highlightPath.link_ids.includes(link.id) ? 5 : 0
+          }
+          linkDirectionalParticleWidth={(link: any) =>
+            highlightPath.link_ids.includes(link.id) ? 3.0 : 0
+          }
           linkDirectionalParticleSpeed={(link: any) => 0.015}
-          linkDirectionalParticleColor={() => '#fbbf24'} // Gold light pulses
+          linkDirectionalParticleColor={() => "#fbbf24"} // Gold light pulses
         />
 
         {/* Reset / Camera Controls Overlay Toolbar */}
@@ -284,19 +354,75 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
           <button
             onClick={resetCamera}
             title="Reset View"
-            className="p-1.5 hover:bg-slate-800 hover:text-indigo-400 rounded transition text-slate-400 cursor-pointer border-t border-slate-800/80 mt-1 pt-2"
+            className="p-1.5 hover:bg-slate-800 hover:text-indigo-400 rounded transition text-slate-400 cursor-pointer border-b border-slate-800/80 pb-2 mb-1"
           >
             <RotateCcw className="w-4.5 h-4.5" />
           </button>
+          <button
+            onClick={() => setShowHelp(!showHelp)}
+            title="3D Navigation Guide"
+            className={`p-1.5 hover:bg-slate-800 hover:text-indigo-400 rounded transition cursor-pointer ${showHelp ? "text-indigo-400 bg-slate-800/50 font-bold" : "text-slate-400"}`}
+          >
+            <HelpCircle className="w-4.5 h-4.5" />
+          </button>
         </div>
+
+        {/* Navigation Guide Modal */}
+        {showHelp && (
+          <div className="absolute right-16 top-4 z-20 bg-slate-900/95 border border-slate-800 rounded-xl p-4 shadow-2xl backdrop-blur-md max-w-[240px] space-y-3 animate-fade-in">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
+              <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                <HelpCircle className="w-4 h-4 text-indigo-400" />
+                3D Navigation Guide
+              </span>
+              <button
+                onClick={() => setShowHelp(false)}
+                className="text-slate-500 hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <div className="space-y-2 text-[11px] text-slate-400">
+              <div className="flex justify-between gap-2 border-b border-slate-950 pb-1">
+                <span className="font-bold text-slate-300">
+                  Left-Click + Drag:
+                </span>
+                <span className="text-right">Rotate camera</span>
+              </div>
+              <div className="flex justify-between gap-2 border-b border-slate-950 pb-1">
+                <span className="font-bold text-slate-300">
+                  Right-Click + Drag:
+                </span>
+                <span className="text-right">Pan (move canvas)</span>
+              </div>
+              <div className="flex justify-between gap-2 border-b border-slate-950 pb-1">
+                <span className="font-bold text-slate-300">Scroll Wheel:</span>
+                <span className="text-right">Zoom in / out</span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="font-bold text-slate-300">Click Node:</span>
+                <span className="text-right">Focus & center node</span>
+              </div>
+            </div>
+            <div className="text-[9px] bg-indigo-950/40 border border-indigo-900/30 rounded p-1.5 text-indigo-300 leading-relaxed font-medium">
+              💡 The graph also rotates slowly automatically. Drag anywhere to
+              take control!
+            </div>
+          </div>
+        )}
 
         {/* Legend */}
         <div className="absolute left-4 bottom-4 z-10 bg-slate-950/90 border border-slate-900 rounded-xl p-3 backdrop-blur-sm max-w-[160px] space-y-2">
-          <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Node Legend</div>
+          <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">
+            Node Legend
+          </div>
           <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] text-slate-400 font-semibold">
             {Object.entries(groupColors).map(([group, color]) => (
               <div key={group} className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+                <span
+                  className="w-2 h-2 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: color }}
+                />
                 <span className="capitalize truncate">{group}</span>
               </div>
             ))}
@@ -307,7 +433,10 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
         {highlightPath.node_ids.length > 0 && (
           <div className="absolute right-4 bottom-4 z-10 bg-amber-950/40 border border-amber-900/50 text-amber-300 rounded-xl p-2.5 backdrop-blur-sm text-[10px] font-medium flex items-center gap-1.5 max-w-[200px]">
             <GitCommit className="w-4 h-4 text-amber-500 animate-pulse-fast flex-shrink-0" />
-            <span>Path highlighted! Dimensions auto-focused. Click Reset View to clear.</span>
+            <span>
+              Path highlighted! Dimensions auto-focused. Click Reset View to
+              clear.
+            </span>
           </div>
         )}
       </div>
@@ -333,11 +462,15 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
           </div>
 
           <div className="space-y-2 text-xs">
-            {selectedNode.properties && Object.keys(selectedNode.properties).length > 0 ? (
+            {selectedNode.properties &&
+            Object.keys(selectedNode.properties).length > 0 ? (
               Object.entries(selectedNode.properties).map(([key, value]) => (
-                <div key={key} className="flex flex-col gap-0.5 bg-slate-950/40 p-2 rounded border border-slate-950">
+                <div
+                  key={key}
+                  className="flex flex-col gap-0.5 bg-slate-950/40 p-2 rounded border border-slate-950"
+                >
                   <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">
-                    {key.replace(/_/g, ' ')}
+                    {key.replace(/_/g, " ")}
                   </span>
                   <span className="text-slate-300 leading-relaxed font-medium">
                     {String(value)}

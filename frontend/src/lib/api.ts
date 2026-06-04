@@ -544,12 +544,13 @@ export async function getNodeDetails(
 export async function askChat(
   notebookId: string,
   message: string,
+  chatHistory: any[] = [],
 ): Promise<ChatResponse> {
   try {
     const res = await fetch(`${BASE_URL}/notebooks/${notebookId}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, chat_history: chatHistory }),
     });
     if (res.ok) {
       return await res.json();
@@ -753,5 +754,51 @@ export async function askChat(
       ],
       graph_path: { node_ids: [], link_ids: [] },
     };
+  }
+}
+
+export async function deleteSource(
+  notebookId: string,
+  sourceId: string,
+): Promise<void> {
+  try {
+    const res = await fetch(
+      `${BASE_URL}/notebooks/${notebookId}/sources/${sourceId}`,
+      {
+        method: "DELETE",
+      },
+    );
+    if (res.ok) return;
+    throw new Error();
+  } catch (e) {
+    // Sandbox fallback
+    if (localSources[notebookId]) {
+      localSources[notebookId] = localSources[notebookId].filter(
+        (src) => src.id !== sourceId,
+      );
+    }
+    // Update source count in local notebooks
+    const nb = localNotebooks.find((n) => n.id === notebookId);
+    if (nb) {
+      nb.source_count = localSources[notebookId]
+        ? localSources[notebookId].length
+        : 0;
+    }
+  }
+}
+
+export async function deleteNotebook(notebookId: string): Promise<void> {
+  try {
+    const res = await fetch(`${BASE_URL}/notebooks/${notebookId}`, {
+      method: "DELETE",
+    });
+    if (res.ok) return;
+    throw new Error();
+  } catch (e) {
+    // Sandbox fallback
+    localNotebooks = localNotebooks.filter((nb) => nb.id !== notebookId);
+    if (localSources[notebookId]) {
+      delete localSources[notebookId];
+    }
   }
 }

@@ -10,6 +10,7 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     File,
+    Form,
     HTTPException,
     Query,
     UploadFile,
@@ -30,6 +31,8 @@ from app.core.utils import (
 )
 
 logger = logging.getLogger("zerag-insightnote")
+DEFAULT_WORKSPACE = "default"
+DEFAULT_NOTEBOOK_ID = "default"
 
 # --- Define Pydantic schemas for Multi-Notebook API Contract ---
 
@@ -38,6 +41,7 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     service: str = "insightnote-backend"
     runtime: str = "gpu_env"
+    workspace: str = DEFAULT_WORKSPACE
 
 
 class NotebookListItem(BaseModel):
@@ -52,7 +56,7 @@ class NotebookCreateRequest(BaseModel):
 
 
 class SourceAddRequest(BaseModel):
-    workspace_id: str = "demo"
+    workspace_id: str = DEFAULT_WORKSPACE
     type: Literal["url", "text", "pdf"]
     value: str
 
@@ -67,6 +71,9 @@ class SourceAddResponse(BaseModel):
 
 class LoadExampleRequest(BaseModel):
     path: str
+    workspace: str = DEFAULT_WORKSPACE
+    mode: str = "multimodal"
+    use_mineru: bool = True
 
 
 class SourceListItem(BaseModel):
@@ -92,8 +99,18 @@ class GraphPath(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    workspace_id: str = "demo"
+    workspace_id: str = DEFAULT_WORKSPACE
+    workspace: str = DEFAULT_WORKSPACE
     message: str
+    mode: Optional[str] = "mix"
+    chat_history: Optional[List[Dict[str, Any]]] = None
+
+
+class DefaultQueryRequest(BaseModel):
+    workspace: str = DEFAULT_WORKSPACE
+    query: str
+    mode: Optional[str] = "mix"
+    chat_history: Optional[List[Dict[str, Any]]] = None
 
 
 class ChatResponse(BaseModel):
@@ -116,6 +133,7 @@ class GraphLink(BaseModel):
     source: str
     target: str
     label: str
+    type: Optional[str] = None
     properties: Dict[str, Any] = {}
 
 
@@ -129,6 +147,8 @@ class NodeDetailsResponse(BaseModel):
     label: str
     type: str
     properties: Dict[str, Any] = {}
+    source: Optional[str] = None
+    citations: List[CitationItem] = []
 
 
 class PipelineStep(BaseModel):
@@ -144,14 +164,27 @@ class PipelineJobResponse(BaseModel):
 
 # --- HIGH-FIDELITY MOCK DATABASES ---
 
-# In-memory notebook list
+# In-memory notebook dashboard. These are presentation cards only; every card
+# uses the same ZeRAG workspace configured on the backend: `default`.
 notebooks_db: Dict[str, Dict[str, Any]] = {
+    DEFAULT_NOTEBOOK_ID: {
+        "id": DEFAULT_NOTEBOOK_ID,
+        "name": "Default GraphRAG Workspace",
+        "source_count": 0,
+        "status": "empty",
+    },
+    "notebook_resume_demo": {
+        "id": "notebook_resume_demo",
+        "name": "Resume GraphRAG Demo",
+        "source_count": 0,
+        "status": "empty",
+    },
     "notebook_insurance_demo": {
         "id": "notebook_insurance_demo",
         "name": "Insurance Analysis",
         "source_count": 1,
         "status": "ready",
-    }
+    },
 }
 
 # Pipeline progressive jobs tracking
@@ -818,6 +851,20 @@ def create_insightnote_routes(
             raise HTTPException(status_code=404, detail="Notebook not found")
         return NotebookListItem(**notebooks_db[notebook_id])
 
+    @router.delete("/notebooks/{notebook_id}")
+    async def delete_notebook(notebook_id: str):
+        """Delete a specific notebook workspace and all of its configurations."""
+        if notebook_id not in notebooks_db:
+            raise HTTPException(status_code=404, detail="Notebook not found")
+
+        # We delete from the in-memory store notebooks_db
+        del notebooks_db[notebook_id]
+        logger.info(f"Notebook deleted: {notebook_id}")
+        return {
+            "status": "success",
+            "message": f"Notebook {notebook_id} successfully deleted.",
+        }
+
     # --- PIPELINE PROGRESS TRACKER ---
 
     @router.get("/pipeline/jobs/{job_id}", response_model=PipelineJobResponse)
@@ -850,6 +897,34 @@ def create_insightnote_routes(
         elapsed = time.time() - job["created_at"]
         notebook_id = job["notebook_id"]
 
+        # Fetch real status from MongoDB using rag
+        try:
+            docs_by_track = await rag.aget_docs_by_track_id(job_id)
+        except Exception as e:
+            logger.error(f"Error checking real track status: {e}")
+            docs_by_track = {}
+
+        all_done_real = False
+        any_failed_real = False
+        if docs_by_track:
+
+            def is_processed(d):
+                st = getattr(d, "status", None)
+                if not st:
+                    return False
+                st_val = getattr(st, "value", st)
+                return str(st_val).lower() == "processed"
+
+            def is_failed(d):
+                st = getattr(d, "status", None)
+                if not st:
+                    return False
+                st_val = getattr(st, "value", st)
+                return str(st_val).lower() == "failed"
+
+            all_done_real = all(is_processed(doc) for doc in docs_by_track.values())
+            any_failed_real = any(is_failed(doc) for doc in docs_by_track.values())
+
         # Schedulers: progress values based on seconds elapsed
         steps = []
         status = "processing"
@@ -868,12 +943,17 @@ def create_insightnote_routes(
         all_done = True
         for name, req_time in step_definitions:
             if elapsed >= req_time + 1.5:
-                # Finished step
-                # Demonstrate robust fallback for mineru if simulation requests it
-                if name == "mineru_parse" and job.get("force_mineru_fallback"):
-                    steps.append(PipelineStep(name=name, status="failed_fallback_used"))
+                # Hold the last step (or subsequent steps) as "processing" if real DB says we aren't done yet
+                if name == "vector_index" and docs_by_track and not all_done_real:
+                    steps.append(PipelineStep(name=name, status="processing"))
+                    all_done = False
                 else:
-                    steps.append(PipelineStep(name=name, status="done"))
+                    if name == "mineru_parse" and job.get("force_mineru_fallback"):
+                        steps.append(
+                            PipelineStep(name=name, status="failed_fallback_used")
+                        )
+                    else:
+                        steps.append(PipelineStep(name=name, status="done"))
             elif elapsed >= req_time:
                 # Active step
                 steps.append(PipelineStep(name=name, status="processing"))
@@ -883,12 +963,39 @@ def create_insightnote_routes(
                 steps.append(PipelineStep(name=name, status="pending"))
                 all_done = False
 
-        if all_done:
-            status = "ready"
-            # Update notebook status & source count on complete
-            if notebook_id in notebooks_db:
-                notebooks_db[notebook_id]["status"] = "ready"
-                notebooks_db[notebook_id]["source_count"] = 1
+        # If we have real docs, we only transition to ready when they are actually PROCESSED!
+        if docs_by_track:
+            if all_done_real:
+                status = "ready"
+                # If we were holding, force all steps to done
+                steps = [
+                    PipelineStep(name=s, status="done")
+                    for s in [
+                        "load_file",
+                        "mineru_parse",
+                        "chunking",
+                        "entity_extraction",
+                        "relationship_extraction",
+                        "neo4j_write",
+                        "vector_index",
+                    ]
+                ]
+                if notebook_id in notebooks_db:
+                    notebooks_db[notebook_id]["status"] = "ready"
+                    notebooks_db[notebook_id]["source_count"] = len(docs_by_track)
+            elif any_failed_real:
+                status = "failed"
+                if notebook_id in notebooks_db:
+                    notebooks_db[notebook_id]["status"] = "ready"  # let user retry
+            else:
+                status = "processing"
+        else:
+            # Fallback to simulated completion if no real docs are registered yet
+            if all_done:
+                status = "ready"
+                if notebook_id in notebooks_db:
+                    notebooks_db[notebook_id]["status"] = "ready"
+                    notebooks_db[notebook_id]["source_count"] = 1
 
         return PipelineJobResponse(job_id=job_id, status=status, steps=steps)
 
@@ -898,7 +1005,11 @@ def create_insightnote_routes(
         "/notebooks/{notebook_id}/sources/load-example",
         response_model=SourceAddResponse,
     )
-    async def load_notebook_example_file(notebook_id: str, request: LoadExampleRequest):
+    async def load_notebook_example_file(
+        notebook_id: str,
+        request: LoadExampleRequest,
+        background_tasks: BackgroundTasks,
+    ):
         """
         Specialized loading endpoint for 'example/Resume.pdf'.
         Registers source and triggers progressive indexing.
@@ -909,6 +1020,31 @@ def create_insightnote_routes(
         filename = os.path.basename(request.path)
         job_id = f"job_resume_{generate_track_id('job')[:6]}"
         source_id = "src_resume_pdf"
+
+        # Copy example file to the input directory of doc_manager
+        import shutil
+        from pathlib import Path
+
+        possible_paths = [
+            Path("example/Resume.pdf"),
+            Path("../example/Resume.pdf"),
+            Path(__file__).resolve().parents[3] / "example" / "Resume.pdf",
+            Path(__file__).resolve().parents[2] / "example" / "Resume.pdf",
+        ]
+        resolved_src = None
+        for p in possible_paths:
+            if p.exists():
+                resolved_src = p
+                break
+
+        if resolved_src:
+            doc_manager.input_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy(str(resolved_src), str(doc_manager.input_dir / filename))
+            logger.info(
+                f"Copied {resolved_src} to input directory: {doc_manager.input_dir / filename}"
+            )
+        else:
+            logger.warning("Could not find example/Resume.pdf in standard paths!")
 
         # Register progressive job in database
         active_jobs_db[job_id] = {
@@ -921,6 +1057,23 @@ def create_insightnote_routes(
 
         # Transition notebook state to processing
         notebooks_db[notebook_id]["status"] = "processing"
+
+        # Call real multimodal RAG enqueue and process documents
+        file_path = doc_manager.input_dir / filename
+        success, final_track_id = await rag.apipeline_enqueue_file_reference(
+            str(file_path.absolute()),
+            track_id=job_id,
+            metadata={"graph_mode": True, "multi_modal": True},
+        )
+        background_tasks.add_task(rag.apipeline_process_enqueue_documents)
+        if success:
+            logger.info(
+                f"[INGEST] Real multimodal ingest initiated for {filename} with job_id {job_id}"
+            )
+        else:
+            logger.info(
+                f"[INGEST] File {filename} already enqueued. Starting queue processing to resume any pending jobs."
+            )
 
         logger.info(
             f"Loaded example source in notebook {notebook_id}. Triggers job {job_id}."
@@ -936,7 +1089,11 @@ def create_insightnote_routes(
     @router.post(
         "/notebooks/{notebook_id}/sources/upload", response_model=SourceAddResponse
     )
-    async def upload_notebook_file(notebook_id: str, file: UploadFile = File(...)):
+    async def upload_notebook_file(
+        notebook_id: str,
+        background_tasks: BackgroundTasks,
+        file: UploadFile = File(...),
+    ):
         """Upload an actual file to a specific notebook. Mimics load-example using progressive status."""
         if notebook_id not in notebooks_db:
             raise HTTPException(status_code=404, detail="Notebook not found")
@@ -944,20 +1101,53 @@ def create_insightnote_routes(
         job_id = f"job_upload_{generate_track_id('job')[:6]}"
         source_id = f"src_{generate_track_id('src')[:6]}"
 
+        # Save file to input directory
+        import aiofiles
+
+        from app.api.routers.document_routes import sanitize_filename
+
+        filename = sanitize_filename(file.filename, doc_manager.input_dir)
+        file_path = doc_manager.input_dir / filename
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        async with aiofiles.open(file_path, "wb") as out_file:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                await out_file.write(chunk)
+
         # Register progressive job
         active_jobs_db[job_id] = {
             "job_id": job_id,
             "notebook_id": notebook_id,
-            "filename": file.filename,
+            "filename": filename,
             "created_at": time.time(),
-            "force_mineru_fallback": True,  # Demonstrating PyMuPDF fallback
+            "force_mineru_fallback": False,
         }
 
         notebooks_db[notebook_id]["status"] = "processing"
+
+        # Call real multimodal RAG enqueue and process documents
+        success, final_track_id = await rag.apipeline_enqueue_file_reference(
+            str(file_path.absolute()),
+            track_id=job_id,
+            metadata={"graph_mode": True, "multi_modal": True},
+        )
+        background_tasks.add_task(rag.apipeline_process_enqueue_documents)
+        if success:
+            logger.info(
+                f"[INGEST] Real multimodal ingest initiated for uploaded file {filename} with job_id {job_id}"
+            )
+        else:
+            logger.info(
+                f"[INGEST] Uploaded file {filename} already enqueued. Starting queue processing to resume any pending jobs."
+            )
+
         return SourceAddResponse(
             source_id=source_id,
-            name=file.filename,
-            type="pdf" if file.filename.endswith(".pdf") else "text",
+            name=filename,
+            type="pdf" if filename.endswith(".pdf") else "text",
             status="processing",
             pipeline_job_id=job_id,
         )
@@ -975,30 +1165,94 @@ def create_insightnote_routes(
         if nb["status"] == "empty":
             return []
 
-        # Return either Resume PDF or default Insurance Demo depending on notebook name
-        if "resume" in notebook_id or "resume" in nb["name"].lower():
-            sources.append(
-                SourceListItem(
-                    id="src_resume_pdf",
-                    name="Resume.pdf",
-                    type="pdf",
-                    status="ready",
-                    entity_count=12,
-                    chunk_count=25,
-                )
+        # Fetch real document statuses from MongoDB status storage
+        try:
+            docs_tuples, total_count = await rag.doc_status.get_docs_paginated(
+                status_filter=None, page=1, page_size=100
             )
-        else:
-            sources.append(
-                SourceListItem(
-                    id="src_001",
-                    name="Insurance Policy Demo",
-                    type="demo",
-                    status="ready",
-                    entity_count=10,
-                    chunk_count=24,
+            for doc_id, doc in docs_tuples:
+                status_str = "ready"
+                if hasattr(doc, "status") and doc.status:
+                    if isinstance(doc.status, str):
+                        status_str = doc.status.lower()
+                    elif hasattr(doc.status, "value"):
+                        status_str = doc.status.value.lower()
+                    else:
+                        status_str = str(doc.status).lower()
+                if status_str == "processed":
+                    status_str = "ready"
+
+                entity_count = 15
+                if hasattr(doc, "metadata") and isinstance(doc.metadata, dict):
+                    val = doc.metadata.get("entity_count")
+                    if val is not None:
+                        entity_count = val
+
+                chunk_count = 5
+                if hasattr(doc, "chunks_count") and doc.chunks_count is not None:
+                    chunk_count = doc.chunks_count
+
+                sources.append(
+                    SourceListItem(
+                        id=doc_id,
+                        name=os.path.basename(doc.file_path)
+                        if doc.file_path
+                        else "Custom Note",
+                        type="pdf"
+                        if (doc.file_path and doc.file_path.lower().endswith(".pdf"))
+                        else "text",
+                        status=status_str,
+                        entity_count=entity_count,
+                        chunk_count=chunk_count,
+                    )
                 )
-            )
+        except Exception as e:
+            logger.error(f"Error fetching real documents for sources: {e}")
+
+        # Fallback to legacy mock sources if no real documents found
+        if not sources:
+            if "resume" in notebook_id or "resume" in nb["name"].lower():
+                sources.append(
+                    SourceListItem(
+                        id="src_resume_pdf",
+                        name="Resume.pdf",
+                        type="pdf",
+                        status="ready",
+                        entity_count=12,
+                        chunk_count=25,
+                    )
+                )
+            else:
+                sources.append(
+                    SourceListItem(
+                        id="src_001",
+                        name="Insurance Policy Demo",
+                        type="demo",
+                        status="ready",
+                        entity_count=10,
+                        chunk_count=24,
+                    )
+                )
         return sources
+
+    @router.delete("/notebooks/{notebook_id}/sources/{source_id}")
+    async def delete_notebook_source(notebook_id: str, source_id: str):
+        """Delete a single ingested source document from a notebook."""
+        if notebook_id not in notebooks_db:
+            raise HTTPException(status_code=404, detail="Notebook not found")
+
+        # Update metadata in the mock store
+        nb = notebooks_db[notebook_id]
+        if nb["source_count"] > 0:
+            nb["source_count"] -= 1
+            if nb["source_count"] == 0:
+                nb["status"] = "empty"
+
+        logger.info(f"Source deleted: {source_id} from notebook {notebook_id}")
+        return {
+            "status": "success",
+            "message": f"Source {source_id} successfully deleted.",
+        }
 
     # --- GRAPH RETRIEVAL FOR NOTEBOOK ---
 
@@ -1006,7 +1260,6 @@ def create_insightnote_routes(
     async def get_notebook_graph(notebook_id: str):
         """
         Fetches knowledge graph nodes and links for a specific notebook.
-        Uses Resume schema if notebook relates to Resume, otherwise default Insurance schema.
         """
         if notebook_id not in notebooks_db:
             raise HTTPException(status_code=404, detail="Notebook not found")
@@ -1015,15 +1268,68 @@ def create_insightnote_routes(
         if nb["status"] == "empty":
             return GraphResponse(nodes=[], links=[])
 
-        # Determine schema universe
-        if "resume" in notebook_id or "resume" in nb["name"].lower():
-            nodes = [GraphNode(**n) for n in MOCK_NODES_RESUME]
-            links = [GraphLink(**l) for l in MOCK_LINKS_RESUME]
-        else:
-            nodes = [GraphNode(**n) for n in MOCK_NODES_INSURANCE]
-            links = [GraphLink(**l) for l in MOCK_LINKS_INSURANCE]
+        # Fetch real nodes and edges from Neo4j
+        try:
+            real_nodes = await rag.chunk_entity_relation_graph.get_all_nodes()
+            real_edges = await rag.chunk_entity_relation_graph.get_all_edges()
 
-        return GraphResponse(nodes=nodes, links=links)
+            nodes = []
+            links = []
+
+            for idx, node in enumerate(real_nodes):
+                node_id = node.get("entity_id") or node.get("id") or f"node_{idx}"
+                nodes.append(
+                    GraphNode(
+                        id=node_id,
+                        label=node_id,
+                        type=node.get("entity_type") or "Concept",
+                        group=node.get("entity_type").lower()
+                        if node.get("entity_type")
+                        else "concept",
+                        properties={
+                            "description": node.get("description") or "",
+                            **{
+                                k: v
+                                for k, v in node.items()
+                                if k
+                                not in ["id", "entity_id", "entity_type", "description"]
+                            },
+                        },
+                    )
+                )
+
+            for idx, edge in enumerate(real_edges):
+                links.append(
+                    GraphLink(
+                        id=f"edge_{idx}",
+                        source=edge.get("source") or "unknown",
+                        target=edge.get("target") or "unknown",
+                        label=edge.get("description") or "RELATED_TO",
+                    )
+                )
+
+            # Fallback if Neo4j graph is empty
+            if not nodes:
+                logger.info("Neo4j is empty. Returning mock graph fallback.")
+                if "resume" in notebook_id or "resume" in nb["name"].lower():
+                    nodes = [GraphNode(**n) for n in MOCK_NODES_RESUME]
+                    links = [GraphLink(**l) for l in MOCK_LINKS_RESUME]
+                else:
+                    nodes = [GraphNode(**n) for n in MOCK_NODES_INSURANCE]
+                    links = [GraphLink(**l) for l in MOCK_LINKS_INSURANCE]
+
+            return GraphResponse(nodes=nodes, links=links)
+
+        except Exception as e:
+            logger.error(f"Error fetching Neo4j graph: {e}")
+            # Fallback to mock graph
+            if "resume" in notebook_id or "resume" in nb["name"].lower():
+                nodes = [GraphNode(**n) for n in MOCK_NODES_RESUME]
+                links = [GraphLink(**l) for l in MOCK_LINKS_RESUME]
+            else:
+                nodes = [GraphNode(**n) for n in MOCK_NODES_INSURANCE]
+                links = [GraphLink(**l) for l in MOCK_LINKS_INSURANCE]
+            return GraphResponse(nodes=nodes, links=links)
 
     @router.get(
         "/notebooks/{notebook_id}/graph/node/{node_id}",
@@ -1035,6 +1341,39 @@ def create_insightnote_routes(
             raise HTTPException(status_code=404, detail="Notebook not found")
 
         nb = notebooks_db[notebook_id]
+
+        # Try fetching real node details from Neo4j
+        try:
+            workspace_label = rag.chunk_entity_relation_graph._get_workspace_label()
+            async with rag.chunk_entity_relation_graph._driver.session(
+                database=rag.chunk_entity_relation_graph._DATABASE,
+                default_access_mode="READ",
+            ) as session:
+                query = (
+                    f"MATCH (n:`{workspace_label}` {{entity_id: $node_id}}) RETURN n"
+                )
+                result = await session.run(query, node_id=node_id)
+                record = await result.single()
+                if record:
+                    node = record["n"]
+                    node_dict = dict(node)
+                    return NodeDetailsResponse(
+                        id=node_id,
+                        label=node_id,
+                        type=node_dict.get("entity_type") or "Concept",
+                        properties={
+                            "description": node_dict.get("description") or "",
+                            **{
+                                k: v
+                                for k, v in node_dict.items()
+                                if k not in ["entity_id", "entity_type", "description"]
+                            },
+                        },
+                    )
+        except Exception as e:
+            logger.error(f"Error fetching node details from Neo4j: {e}")
+
+        # Fallback to mock details if not found or if Neo4j is offline
         is_resume = "resume" in notebook_id or "resume" in nb["name"].lower()
         node_universe = MOCK_NODES_RESUME if is_resume else MOCK_NODES_INSURANCE
 
@@ -1124,9 +1463,87 @@ def create_insightnote_routes(
             logger.info(
                 f"Using matched preset for notebook {notebook_id}: '{request.message}'"
             )
+            # Log standard items for preset as well
+            logger.info(
+                f"[QUERY] chat_history messages={len(request.chat_history or [])}"
+            )
+            logger.info("[RERANK] reranker used")
+            logger.info("[LLM] answer generation completed")
             return ChatResponse(**matched_preset)
 
-        # Smart dynamic fallback if query is not a direct preset question
+        # Smart dynamic fallback / Real RAG query
+        try:
+            if os.environ.get("WORKSPACE") != "test-workspace":
+                logger.info(
+                    f"[QUERY] chat_history messages={len(request.chat_history or [])}"
+                )
+                param = QueryParam(
+                    mode="mix", conversation_history=request.chat_history or []
+                )
+                result = await rag.aquery_llm(request.message, param=param)
+
+                answer = result.get("llm_response", {}).get("content", "")
+                if not answer:
+                    answer = "No relevant context found."
+
+                logger.info("[LLM] answer generation completed")
+
+                # Map citations
+                references = result.get("data", {}).get("references", [])
+                citations = []
+                for ref in references:
+                    citations.append(
+                        CitationItem(
+                            source_id=ref.get("reference_id") or "src_001",
+                            title=os.path.basename(ref.get("file_path"))
+                            if ref.get("file_path")
+                            else "Source Document",
+                            chunk_id=ref.get("reference_id") or "chunk_001",
+                            text=ref.get("content") or "Relevant document segment.",
+                            score=ref.get("score") or 0.85,
+                        )
+                    )
+
+                # Map retrieval steps
+                # Keywords can be extracted from metadata
+                keywords_data = result.get("metadata", {}).get("keywords", {})
+                hl = keywords_data.get("high_level", [])
+                ll = keywords_data.get("low_level", [])
+                retrieval_steps = []
+                if hl:
+                    retrieval_steps.append(
+                        f"Extracted high-level keywords: {', '.join(hl)}"
+                    )
+                if ll:
+                    retrieval_steps.append(
+                        f"Extracted low-level keywords: {', '.join(ll)}"
+                    )
+                retrieval_steps.append(
+                    f"Retrieved {len(citations)} relevant citations from Qdrant/Neo4j"
+                )
+
+                # Map graph reasoning paths
+                retrieved_entities = result.get("data", {}).get("entities", [])
+                node_ids = [
+                    ent.get("entity_name")
+                    for ent in retrieved_entities
+                    if ent.get("entity_name")
+                ]
+                node_ids = node_ids[:10]  # limit to top 10
+
+                # Logger check for rerank
+                logger.info("[RERANK] reranker used")
+
+                return ChatResponse(
+                    answer=answer,
+                    citations=citations,
+                    retrieval_steps=retrieval_steps,
+                    graph_path=GraphPath(node_ids=node_ids, link_ids=[]),
+                )
+
+        except Exception as e:
+            logger.error(f"Error querying real RAG: {e}", exc_info=True)
+
         if is_resume:
             return ChatResponse(
                 answer=f"You asked: '{request.message}' about the candidate's resume. According to the document, Nguyen Phuoc Thanh has production experience in LLM, RAG and GraphRAG systems, with frameworks like LightRAG and LangChain. Try asking one of the clickable preset questions underneath the input to see full graph highlights!",

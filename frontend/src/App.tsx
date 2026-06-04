@@ -1,16 +1,34 @@
-import { useState, useEffect } from 'react';
-import { SourcesPanel } from './components/sources/SourcesPanel';
-import { ChatPanel } from './components/chat/ChatPanel';
-import { KnowledgeGraphPanel } from './components/graph/KnowledgeGraphPanel';
-import { SourceListItem, ChatMessage, GraphResponse, GraphPath, Notebook, PipelineJobResponse } from './lib/types';
-import * as api from './lib/api';
+import { useState, useEffect } from "react";
+import { SourcesPanel } from "./components/sources/SourcesPanel";
+import { ChatPanel } from "./components/chat/ChatPanel";
+import { KnowledgeGraphPanel } from "./components/graph/KnowledgeGraphPanel";
+import {
+  Trash2,
+  Database,
+  Layers,
+  Cpu,
+  Sparkles,
+  HardDrive,
+  Plus,
+  Activity,
+  BookOpen,
+} from "lucide-react";
+import {
+  SourceListItem,
+  ChatMessage,
+  GraphResponse,
+  GraphPath,
+  Notebook,
+  PipelineJobResponse,
+} from "./lib/types";
+import * as api from "./lib/api";
 
 export default function App() {
   // State definitions
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
   const [notebooksLoading, setNotebooksLoading] = useState(false);
   const [activeNotebook, setActiveNotebook] = useState<Notebook | null>(null);
-  const [createInput, setCreateInput] = useState('');
+  const [createInput, setCreateInput] = useState("");
 
   const [sources, setSources] = useState<SourceListItem[]>([]);
   const [sourcesLoading, setSourcesLoading] = useState(false);
@@ -18,12 +36,20 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
 
-  const [graphData, setGraphData] = useState<GraphResponse>({ nodes: [], links: [] });
-  const [highlightPath, setHighlightPath] = useState<GraphPath>({ node_ids: [], link_ids: [] });
+  const [graphData, setGraphData] = useState<GraphResponse>({
+    nodes: [],
+    links: [],
+  });
+  const [highlightPath, setHighlightPath] = useState<GraphPath>({
+    node_ids: [],
+    link_ids: [],
+  });
 
   const [backendOnline, setBackendOnline] = useState(false);
 
-  const [pipelineJob, setPipelineJob] = useState<PipelineJobResponse | null>(null);
+  const [pipelineJob, setPipelineJob] = useState<PipelineJobResponse | null>(
+    null,
+  );
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
   // Initial load
@@ -32,7 +58,9 @@ export default function App() {
       // 1. Check health
       const isOnline = await api.checkBackendHealth();
       setBackendOnline(isOnline);
-      console.log(`Backend health check: ${isOnline ? 'ONLINE' : 'FALLBACK MODE'}`);
+      console.log(
+        `Backend health check: ${isOnline ? "ONLINE" : "FALLBACK MODE"}`,
+      );
 
       // 2. Load notebooks
       setNotebooksLoading(true);
@@ -58,7 +86,7 @@ export default function App() {
         const jobStatus = await api.getPipelineStatus(activeJobId);
         setPipelineJob(jobStatus);
 
-        if (jobStatus.status === 'ready' || jobStatus.status === 'failed') {
+        if (jobStatus.status === "ready" || jobStatus.status === "failed") {
           setActiveJobId(null);
           // Refresh sources & graph
           const updatedSources = await api.listSources(activeNotebook.id);
@@ -109,8 +137,26 @@ export default function App() {
 
         const graph = await api.getGraph(activeNotebook.id);
         setGraphData(graph);
+
+        // Load chat history from localStorage
+        const savedHistory = localStorage.getItem(
+          "insightnote.default.chat_history",
+        );
+        if (savedHistory) {
+          try {
+            setMessages(JSON.parse(savedHistory));
+          } catch (err) {
+            console.error("Error parsing saved chat history", err);
+            setMessages([]);
+          }
+        } else {
+          setMessages([]);
+        }
       } catch (e) {
-        console.error(`Failed to load data for notebook ${activeNotebook.id}`, e);
+        console.error(
+          `Failed to load data for notebook ${activeNotebook.id}`,
+          e,
+        );
       } finally {
         setSourcesLoading(false);
       }
@@ -119,12 +165,26 @@ export default function App() {
     loadNotebookData();
   }, [activeNotebook]);
 
+  // Persist chat history to localStorage
+  useEffect(() => {
+    if (activeNotebook) {
+      if (messages.length > 0) {
+        localStorage.setItem(
+          "insightnote.default.chat_history",
+          JSON.stringify(messages),
+        );
+      } else {
+        localStorage.removeItem("insightnote.default.chat_history");
+      }
+    }
+  }, [messages, activeNotebook]);
+
   // Handler: Create Notebook
   const handleCreateNotebook = async (name: string) => {
     if (!name.trim()) return;
     try {
       const newNb = await api.createNotebook(name.trim());
-      setNotebooks(prev => [...prev, newNb]);
+      setNotebooks((prev) => [...prev, newNb]);
       setActiveNotebook(newNb); // Auto-open after creating
     } catch (e) {
       console.error("Failed to create notebook", e);
@@ -137,12 +197,12 @@ export default function App() {
     const newSrc: SourceListItem = {
       id: `src_url_${Date.now()}`,
       name: url,
-      type: 'url',
-      status: 'ready',
+      type: "url",
+      status: "ready",
       entity_count: 3,
-      chunk_count: 5
+      chunk_count: 5,
     };
-    setSources(prev => [newSrc, ...prev]);
+    setSources((prev) => [newSrc, ...prev]);
   };
 
   // Handler: Add plain-text note source
@@ -150,33 +210,38 @@ export default function App() {
     if (!activeNotebook) return;
     const newSrc: SourceListItem = {
       id: `src_text_${Date.now()}`,
-      name: text.split('\n')[0] || "Custom Note",
-      type: 'text',
-      status: 'ready',
+      name: text.split("\n")[0] || "Custom Note",
+      type: "text",
+      status: "ready",
       entity_count: 2,
-      chunk_count: 3
+      chunk_count: 3,
     };
-    setSources(prev => [newSrc, ...prev]);
+    setSources((prev) => [newSrc, ...prev]);
   };
 
   // Handler: Load Example Resume file
   const handleLoadExample = async () => {
     if (!activeNotebook) return;
     try {
-      const response = await api.loadExample(activeNotebook.id, "example/Resume.pdf");
+      const response = await api.loadExample(
+        activeNotebook.id,
+        "example/Resume.pdf",
+      );
       const pendingSource: SourceListItem = {
         id: response.source_id,
         name: response.name,
         type: response.type,
         status: response.status,
         entity_count: 0,
-        chunk_count: 0
+        chunk_count: 0,
       };
-      setSources(prev => [pendingSource, ...prev]);
+      setSources((prev) => [pendingSource, ...prev]);
 
       if (response.pipeline_job_id) {
         setActiveJobId(response.pipeline_job_id);
-        const initJobStatus = await api.getPipelineStatus(response.pipeline_job_id);
+        const initJobStatus = await api.getPipelineStatus(
+          response.pipeline_job_id,
+        );
         setPipelineJob(initJobStatus);
       }
     } catch (e) {
@@ -195,13 +260,15 @@ export default function App() {
         type: response.type,
         status: response.status,
         entity_count: 0,
-        chunk_count: 0
+        chunk_count: 0,
       };
-      setSources(prev => [pendingSource, ...prev]);
+      setSources((prev) => [pendingSource, ...prev]);
 
       if (response.pipeline_job_id) {
         setActiveJobId(response.pipeline_job_id);
-        const initJobStatus = await api.getPipelineStatus(response.pipeline_job_id);
+        const initJobStatus = await api.getPipelineStatus(
+          response.pipeline_job_id,
+        );
         setPipelineJob(initJobStatus);
       }
     } catch (e) {
@@ -215,30 +282,42 @@ export default function App() {
     // 1. Create User Message
     const userMsg: ChatMessage = {
       id: `msg_user_${Date.now()}`,
-      role: 'user',
+      role: "user",
       content: text,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      timestamp: new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
     };
 
-    setMessages(prev => [...prev, userMsg]);
+    setMessages((prev) => [...prev, userMsg]);
     setChatLoading(true);
 
     try {
-      // 2. Call backend/mock response
-      const response = await api.askChat(activeNotebook.id, text);
+      // Create chat history payload containing prior conversation + current query
+      const chatHistory = [
+        ...messages.map((m) => ({ role: m.role, content: m.content })),
+        { role: "user", content: text },
+      ];
+
+      // 2. Call backend/mock response with history
+      const response = await api.askChat(activeNotebook.id, text, chatHistory);
 
       // 3. Create Assistant Message
       const assistantMsg: ChatMessage = {
         id: `msg_assistant_${Date.now()}`,
-        role: 'assistant',
+        role: "assistant",
         content: response.answer,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
         citations: response.citations,
         retrieval_steps: response.retrieval_steps,
-        graph_path: response.graph_path
+        graph_path: response.graph_path,
       };
 
-      setMessages(prev => [...prev, assistantMsg]);
+      setMessages((prev) => [...prev, assistantMsg]);
 
       // 4. Highlight path in 3D Graph (if path exists)
       if (response.graph_path && response.graph_path.node_ids.length > 0) {
@@ -256,19 +335,71 @@ export default function App() {
 
   // Handler: Node details fetching
   const handleNodeClick = async (nodeId: string) => {
-    if (!activeNotebook) return { id: nodeId, label: nodeId, type: 'Concept', properties: {} };
+    if (!activeNotebook)
+      return { id: nodeId, label: nodeId, type: "Concept", properties: {} };
     return await api.getNodeDetails(activeNotebook.id, nodeId);
+  };
+
+  // Handler: Delete Ingested Source Document
+  const handleDeleteSource = async (sourceId: string) => {
+    if (!activeNotebook) return;
+    try {
+      await api.deleteSource(activeNotebook.id, sourceId);
+      setSources((prev) => prev.filter((src) => src.id !== sourceId));
+
+      // Reload graph data after deleting a source
+      const updatedGraph = await api.getGraph(activeNotebook.id);
+      setGraphData(updatedGraph);
+
+      // Clear highlighted path
+      setHighlightPath({ node_ids: [], link_ids: [] });
+
+      // Update notebooks list and active notebook source count
+      const list = await api.listNotebooks();
+      setNotebooks(list);
+      const updatedNb = list.find((n) => n.id === activeNotebook.id);
+      if (updatedNb) {
+        setActiveNotebook(updatedNb);
+      }
+    } catch (e) {
+      console.error("Failed to delete source", e);
+    }
+  };
+
+  // Handler: Delete Notebook
+  const handleDeleteNotebook = async (notebookId: string) => {
+    try {
+      await api.deleteNotebook(notebookId);
+      setNotebooks((prev) => prev.filter((nb) => nb.id !== notebookId));
+      if (activeNotebook && activeNotebook.id === notebookId) {
+        setActiveNotebook(null);
+      }
+    } catch (e) {
+      console.error("Failed to delete notebook", e);
+    }
   };
 
   // --- RENDER DASHBOARD VIEW ---
   if (!activeNotebook) {
+    const totalSourcesCount = notebooks.reduce(
+      (acc, nb) => acc + (nb.source_count || 0),
+      0,
+    );
+
     return (
       <div className="h-screen w-screen bg-[#0a0a0b] text-slate-100 flex flex-col font-sans overflow-hidden">
         {/* Top Banner */}
-        <div className="px-4 py-1.5 bg-slate-950 border-b border-slate-900 flex justify-between items-center text-[11px] font-semibold text-slate-500">
+        <div className="px-4 py-1.5 bg-slate-950 border-b border-slate-900 flex justify-between items-center text-[11px] font-semibold text-slate-500 z-10">
           <div className="flex items-center gap-1.5">
-            <span className={`w-2 h-2 rounded-full ${backendOnline ? 'bg-emerald-500 shadow-emerald-500/50' : 'bg-amber-500 shadow-amber-500/50'} animate-pulse`} />
-            <span>System Status: {backendOnline ? 'Production Backend Active' : 'Sandbox Demo Fallback Active'}</span>
+            <span
+              className={`w-2 h-2 rounded-full ${backendOnline ? "bg-emerald-500 shadow-emerald-500/50" : "bg-amber-500 shadow-amber-500/50"} animate-pulse`}
+            />
+            <span>
+              System Status:{" "}
+              {backendOnline
+                ? "Production Backend Active"
+                : "Sandbox Demo Fallback Active"}
+            </span>
           </div>
           <div className="text-slate-600">
             Vite • React • 3D Force-Directed Graph WebGL • Neo4j-Ready
@@ -276,58 +407,123 @@ export default function App() {
         </div>
 
         {/* Dashboard Content */}
-        <div className="flex-1 flex flex-col items-center justify-center p-6 overflow-y-auto">
+        <div className="flex-1 flex flex-col items-center p-6 md:p-12 overflow-y-auto space-y-8 bg-gradient-to-b from-[#0e0e11] via-[#0a0a0b] to-[#070709]">
           <div className="w-full max-w-4xl space-y-8">
             {/* Header / Logo */}
             <div className="text-center space-y-3">
-              <div className="inline-flex p-3.5 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl text-indigo-400 shadow-xl shadow-indigo-500/5 mb-2">
-                <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-                </svg>
+              <div className="inline-flex p-3.5 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl text-indigo-400 shadow-xl shadow-indigo-500/5 mb-1 animate-pulse">
+                <Sparkles className="w-8 h-8 text-indigo-400" />
               </div>
               <h1 className="text-4xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-indigo-200 via-slate-100 to-indigo-200">
                 InsightNote
               </h1>
-              <p className="text-slate-400 max-w-md mx-auto text-sm leading-relaxed">
-                A multi-notebook GraphRAG knowledge workspace. Index documents into a 3D WebGL relation graph and chat with grounded citations.
+              <p className="text-slate-450 max-w-md mx-auto text-xs sm:text-sm leading-relaxed">
+                A multi-notebook GraphRAG knowledge workspace. Index documents
+                into a 3D WebGL relation graph and chat with grounded citations.
               </p>
+            </div>
+
+            {/* System Overview Dashboard Metrics */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Metric 1 */}
+              <div className="p-4 bg-slate-900/20 border border-slate-900/60 rounded-2xl backdrop-blur-md flex items-center gap-4 hover:border-slate-800 transition duration-200">
+                <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl text-indigo-400">
+                  <Layers className="w-5 h-5" />
+                </div>
+                <div className="space-y-0.5">
+                  <div className="text-[10px] uppercase tracking-wider font-extrabold text-slate-500">
+                    Research Hubs
+                  </div>
+                  <div className="text-xl font-black text-slate-100">
+                    {notebooks.length} Active
+                  </div>
+                  <div className="text-[10px] text-slate-500">
+                    Isolated workspaces
+                  </div>
+                </div>
+              </div>
+
+              {/* Metric 2 */}
+              <div className="p-4 bg-slate-900/20 border border-slate-900/60 rounded-2xl backdrop-blur-md flex items-center gap-4 hover:border-slate-800 transition duration-200">
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400">
+                  <Database className="w-5 h-5" />
+                </div>
+                <div className="space-y-0.5">
+                  <div className="text-[10px] uppercase tracking-wider font-extrabold text-slate-500">
+                    Knowledge Ingested
+                  </div>
+                  <div className="text-xl font-black text-slate-100">
+                    {totalSourcesCount} Documents
+                  </div>
+                  <div className="text-[10px] text-slate-500">
+                    PDFs, Notes, and URLs
+                  </div>
+                </div>
+              </div>
+
+              {/* Metric 3 */}
+              <div className="p-4 bg-slate-900/20 border border-slate-900/60 rounded-2xl backdrop-blur-md flex items-center gap-4 hover:border-slate-800 transition duration-200">
+                <div
+                  className={`p-3 rounded-xl border ${backendOnline ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" : "bg-amber-500/10 border-amber-500/20 text-amber-400"}`}
+                >
+                  <Cpu className="w-5 h-5" />
+                </div>
+                <div className="space-y-0.5 min-w-0 flex-1">
+                  <div className="text-[10px] uppercase tracking-wider font-extrabold text-slate-500">
+                    GraphRAG Engine
+                  </div>
+                  <div
+                    className={`text-xs font-bold uppercase truncate ${backendOnline ? "text-emerald-400" : "text-amber-400"}`}
+                  >
+                    {backendOnline
+                      ? "Neo4j / Qdrant Live"
+                      : "Sandbox Simulation"}
+                  </div>
+                  <div className="text-[9px] text-slate-500 truncate">
+                    {backendOnline
+                      ? "Production Stack Connected"
+                      : "Local Mock Storage Enabled"}
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Main Section */}
             <div className="grid grid-cols-1 md:grid-cols-[340px_1fr] gap-8 bg-slate-900/30 border border-slate-900 rounded-3xl p-6 backdrop-blur-md">
-              
               {/* Left Column: Create Notebook */}
               <div className="space-y-4 border-slate-900 md:border-r md:pr-8 flex flex-col justify-center">
-                <div className="space-y-1.5">
-                  <h3 className="text-base font-bold text-slate-200">Create Notebook</h3>
-                  <p className="text-xs text-slate-450 leading-relaxed">
-                    Set up an isolated workspace for a specific topic, document library, or research campaign.
+                <div className="space-y-2">
+                  <h3 className="text-base font-black text-slate-200 flex items-center gap-1.5">
+                    <Plus className="w-4 h-4 text-indigo-400" />
+                    Create Notebook
+                  </h3>
+                  <p className="text-[11px] text-slate-450 leading-relaxed">
+                    Set up an isolated workspace to index unique documents into
+                    its own dedicated 3D Knowledge Graph.
                   </p>
                 </div>
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
                     handleCreateNotebook(createInput);
-                    setCreateInput('');
+                    setCreateInput("");
                   }}
                   className="space-y-3"
                 >
                   <input
                     type="text"
                     required
-                    placeholder="e.g. Resume Analysis"
+                    placeholder="e.g. Contract Analysis"
                     value={createInput}
                     onChange={(e) => setCreateInput(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-850 focus:border-indigo-500/80 focus:ring-1 focus:ring-indigo-500/30 rounded-xl px-4 py-3 text-sm placeholder-slate-650 outline-none text-slate-100 disabled:opacity-60 transition"
+                    className="w-full bg-slate-950/60 border border-slate-850 focus:border-indigo-500/80 focus:ring-1 focus:ring-indigo-500/30 rounded-xl px-4 py-3.5 text-xs placeholder-slate-650 outline-none text-slate-100 disabled:opacity-60 transition"
                   />
                   <button
                     type="submit"
                     disabled={!createInput.trim()}
                     className="w-full bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 text-slate-950 font-bold py-3 rounded-xl transition duration-150 shadow-lg shadow-indigo-500/10 cursor-pointer flex items-center justify-center gap-1.5 text-xs text-slate-100"
                   >
-                    <svg className="w-4 h-4 text-slate-950" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
-                    </svg>
+                    <Plus className="w-4 h-4 text-slate-950" />
                     Create and Open Notebook
                   </button>
                 </form>
@@ -336,24 +532,29 @@ export default function App() {
               {/* Right Column: Notebook List */}
               <div className="space-y-4 min-h-[220px] flex flex-col justify-center">
                 <div className="flex justify-between items-center">
-                  <h3 className="text-base font-bold text-slate-200">Notebook Dashboard</h3>
+                  <h3 className="text-base font-black text-slate-200 flex items-center gap-1.5">
+                    <BookOpen className="w-4 h-4 text-indigo-400" />
+                    Notebook Dashboard
+                  </h3>
                   <span className="text-[10px] bg-slate-850 text-indigo-400 px-2 py-0.5 rounded-full font-bold border border-slate-800">
-                    {notebooks.length} Notebook{notebooks.length !== 1 ? 's' : ''}
+                    {notebooks.length} Notebook
+                    {notebooks.length !== 1 ? "s" : ""}
                   </span>
                 </div>
 
                 {notebooksLoading ? (
                   <div className="flex-1 flex flex-col items-center justify-center text-slate-500 gap-2 py-8">
-                    <svg className="w-6 h-6 animate-spin text-indigo-500" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
+                    <Activity className="w-6 h-6 animate-spin text-indigo-500" />
                     <span className="text-xs">Loading notebooks...</span>
                   </div>
                 ) : notebooks.length === 0 ? (
                   <div className="flex-1 flex flex-col items-center justify-center text-center p-6 border border-dashed border-slate-850 rounded-2xl bg-slate-950/10">
-                    <p className="text-xs text-slate-500">No notebooks available.</p>
-                    <p className="text-[10px] text-slate-650 mt-1">Create one on the left to begin.</p>
+                    <p className="text-xs text-slate-500">
+                      No notebooks available.
+                    </p>
+                    <p className="text-[10px] text-slate-650 mt-1">
+                      Create one on the left to begin.
+                    </p>
                   </div>
                 ) : (
                   <div className="flex-1 overflow-y-auto max-h-[240px] pr-1 space-y-2.5">
@@ -361,7 +562,7 @@ export default function App() {
                       <div
                         key={nb.id}
                         onClick={() => handleSelectNotebook(nb)}
-                        className="p-4 bg-slate-950/40 border border-slate-850 rounded-2xl hover:border-indigo-500/40 transition duration-150 flex items-center justify-between cursor-pointer group"
+                        className="p-4 bg-slate-950/40 border border-slate-850 hover:border-indigo-500/40 rounded-2xl transition duration-150 flex items-center justify-between cursor-pointer group hover:-translate-y-0.5 hover:shadow-lg hover:shadow-indigo-950/10"
                       >
                         <div className="space-y-1 min-w-0 flex-1 pr-4">
                           <h4 className="text-sm font-bold text-slate-200 group-hover:text-indigo-400 transition truncate">
@@ -369,20 +570,33 @@ export default function App() {
                           </h4>
                           <div className="flex items-center gap-2.5 text-[11px] text-slate-500 font-medium">
                             <span className="flex items-center gap-1">
-                              <svg className="w-3.5 h-3.5 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                              </svg>
-                              {nb.source_count} source{nb.source_count !== 1 ? 's' : ''}
+                              <Database className="w-3.5 h-3.5 text-indigo-400" />
+                              {nb.source_count} source
+                              {nb.source_count !== 1 ? "s" : ""}
                             </span>
                             <span>•</span>
-                            <span className="capitalize">{nb.status}</span>
+                            <span
+                              className={`capitalize font-bold ${nb.status === "processing" ? "text-indigo-400 animate-pulse" : "text-slate-500"}`}
+                            >
+                              {nb.status}
+                            </span>
                           </div>
                         </div>
-                        <div className="flex items-center gap-1 text-[11px] font-bold text-indigo-400 opacity-0 group-hover:opacity-100 transition duration-150 flex-shrink-0">
-                          Open
-                          <svg className="w-3.5 h-3.5 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
-                          </svg>
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <div className="flex items-center gap-0.5 text-[11px] font-bold text-indigo-400 opacity-0 group-hover:opacity-100 transition duration-150">
+                            Open
+                            <Plus className="w-3 h-3 rotate-45" />
+                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation(); // Stop opening notebook on delete click!
+                              handleDeleteNotebook(nb.id);
+                            }}
+                            title="Delete Notebook"
+                            className="p-2 hover:bg-red-950/40 text-slate-500 hover:text-red-400 rounded-xl transition duration-150 cursor-pointer sm:opacity-0 group-hover:opacity-100"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -402,8 +616,15 @@ export default function App() {
       {/* Top Banner */}
       <div className="px-4 py-1 bg-slate-950 border-b border-slate-900 flex justify-between items-center text-[11px] font-semibold text-slate-500">
         <div className="flex items-center gap-1.5">
-          <span className={`w-2 h-2 rounded-full ${backendOnline ? 'bg-emerald-500 shadow-emerald-500/50' : 'bg-amber-500 shadow-amber-500/50'} animate-pulse`} />
-          <span>System Status: {backendOnline ? 'Production Backend Active' : 'Sandbox Demo Fallback Active'}</span>
+          <span
+            className={`w-2 h-2 rounded-full ${backendOnline ? "bg-emerald-500 shadow-emerald-500/50" : "bg-amber-500 shadow-amber-500/50"} animate-pulse`}
+          />
+          <span>
+            System Status:{" "}
+            {backendOnline
+              ? "Production Backend Active"
+              : "Sandbox Demo Fallback Active"}
+          </span>
         </div>
         <div className="hidden sm:block text-slate-600">
           Vite • React • 3D Force-Directed Graph WebGL • Neo4j-Ready
@@ -423,6 +644,7 @@ export default function App() {
             onAddText={handleAddText}
             onUploadFile={handleUploadFile}
             onLoadExample={handleLoadExample}
+            onDeleteSource={handleDeleteSource}
             onBackToDashboard={() => setActiveNotebook(null)}
           />
         </div>
@@ -433,7 +655,10 @@ export default function App() {
             messages={messages}
             isLoading={chatLoading}
             onSendMessage={handleSendMessage}
-            isResume={activeNotebook.id.includes('resume') || activeNotebook.name.toLowerCase().includes('resume')}
+            isResume={
+              activeNotebook.id.includes("resume") ||
+              activeNotebook.name.toLowerCase().includes("resume")
+            }
           />
         </div>
 
