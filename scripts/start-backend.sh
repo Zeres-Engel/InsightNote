@@ -1,6 +1,6 @@
 #!/bin/bash
 echo "===================================================="
-echo "Starting FastAPI Backend (Python 3.11.5)..."
+echo "Starting FastAPI Backend (gpu_env)..."
 echo "===================================================="
 cd "$(dirname "$0")/../backend"
-C:/Users/nguye/AppData/Local/Programs/Python/Python311/python.exe -m uvicorn server:app --host 0.0.0.0 --port 8000 --reload
+C:/Users/nguye/anaconda3/envs/gpu_env/python.exe -m uvicorn server:app --host 0.0.0.0 --port 8000 --reload

@@ -1,6 +1,9 @@
 import logging
 import os
 import sys
+
+# Disable HF symlinks on Windows to avoid privilege error
+os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Callable, List
@@ -133,10 +136,57 @@ def create_embedding_func() -> EmbeddingFunc:
             func=lambda texts: ollama_embed(texts, model=model),
         )
     elif binding == "gemini":
-        # gemini-embedding-001 has 3072 dim, text-embedding-004 has 768 dim
-        dim = 3072 if "gemini-embedding-001" in model else 768
+        import asyncio
+        import threading
+
+        detected_dim = 3072  # Default fallback
+        try:
+            logger.info("[EMBED] provider=google")
+            logger.info(f"[EMBED] model={model}")
+
+            embeddings = None
+            exception_raised = None
+
+            def run_in_thread():
+                nonlocal embeddings, exception_raised
+                new_loop = asyncio.new_event_loop()
+                try:
+                    asyncio.set_event_loop(new_loop)
+                    embeddings = new_loop.run_until_complete(
+                        gemini_embed.func(
+                            ["test"],
+                            model=model,
+                            api_key=api_key,
+                            base_url=config.EMBEDDING_BASE_URL,
+                        )
+                    )
+                except Exception as ex:
+                    exception_raised = ex
+                finally:
+                    new_loop.close()
+
+            t = threading.Thread(target=run_in_thread)
+            t.start()
+            t.join()
+
+            if exception_raised:
+                raise exception_raised
+
+            if embeddings is not None:
+                detected_dim = int(embeddings.shape[1])
+                logger.info("[EMBED] provider=google")
+                logger.info(f"[EMBED] model={model}")
+                logger.info(f"[EMBED] detected_dimension={detected_dim}")
+            else:
+                raise RuntimeError("No embedding returned from thread execution")
+        except Exception as e:
+            logger.warning(
+                f"Failed to dynamically detect Gemini embedding dimension: {e}. Using fallback 3072."
+            )
+            detected_dim = 3072
+
         return EmbeddingFunc(
-            embedding_dim=dim,
+            embedding_dim=detected_dim,
             max_token_size=2048,
             model_name=model,
             func=lambda texts: gemini_embed.func(
@@ -257,30 +307,43 @@ async def lifespan(app: FastAPI):
     if hasattr(rag, "check_and_migrate_data"):
         await rag.check_and_migrate_data()
 
-    logger.info("=" * 60)
-    logger.info("ZeRAG Server Configuration")
-    logger.info("=" * 60)
-    logger.info(f"  Workspace   : {config.WORKSPACE}")
-    logger.info(f"  Working Dir : {config.WORKING_DIR}")
-    logger.info("-" * 60)
-    logger.info(
-        f"  LLM         : {config.LLM_MODEL} (binding: {config.LLM_BINDING}, base_url: {config.LLM_BASE_URL})"
+    llm_binding = (
+        "google" if config.LLM_BINDING.lower() == "gemini" else config.LLM_BINDING
     )
-    logger.info(
-        f"  Embedding   : {config.EMBEDDING_MODEL} (binding: {config.EMBEDDING_BINDING}, base_url: {config.EMBEDDING_BASE_URL})"
+    embed_binding = (
+        "google"
+        if config.EMBEDDING_BINDING.lower() == "gemini"
+        else config.EMBEDDING_BINDING
     )
-    reranker_status = (
-        f"{config.RERANKER_MODEL} (binding: {config.RERANKER_BINDING}, base_url: {config.RERANKER_BASE_URL})"
-        if config.RERANKER_MODEL
-        else "DISABLED"
+    embed_dim = (
+        rag.embedding_func.embedding_dim if hasattr(rag, "embedding_func") else 3072
     )
-    logger.info(f"  Reranker    : {reranker_status}")
-    logger.info("-" * 60)
-    logger.info(f"  KV Storage  : {config.KV_STORAGE}")
-    logger.info(f"  Graph       : {config.GRAPH_STORAGE}")
-    logger.info(f"  Vector DB   : {config.VECTOR_STORAGE}")
-    logger.info(f"  Doc Status  : {config.DOC_STATUS_STORAGE}")
-    logger.info("=" * 60)
+    graph_storage = config.GRAPH_STORAGE
+    if graph_storage == "Neo4jStorage":
+        graph_storage = "Neo4JStorage"
+    reranker_status = config.RERANKER_MODEL if config.RERANKER_MODEL else "DISABLED"
+
+    banner = f"""============================================================
+ZeRAG Server Configuration
+============================================================
+Workspace   : {config.WORKSPACE}
+Working Dir : {config.WORKING_DIR}
+------------------------------------------------------------
+LLM         : {config.LLM_MODEL}
+LLM binding : {llm_binding}
+Embedding   : {config.EMBEDDING_MODEL}
+Embedding binding : {embed_binding}
+Embedding dimension : {embed_dim}
+Reranker    : {reranker_status}
+------------------------------------------------------------
+KV Storage  : {config.KV_STORAGE}
+Graph       : {graph_storage}
+Vector DB   : {config.VECTOR_STORAGE}
+Doc Status  : {config.DOC_STATUS_STORAGE}
+============================================================="""
+    print(banner)
+    for line in banner.split("\n"):
+        logger.info(line)
 
     yield
     await rag.finalize_storages()

@@ -3,34 +3,37 @@ This module contains all document-related routes for the ZeRAG API.
 """
 
 import asyncio
-from functools import lru_cache
-from app.core.utils import logger, get_pinyin_sort_key
-import aiofiles
 import traceback
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Dict, List, Optional, Any, Literal
+from functools import lru_cache
 from io import BytesIO
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional
+
+import aiofiles
 from fastapi import (
     APIRouter,
     BackgroundTasks,
     Depends,
     File,
     Form,
-    Query,
     HTTPException,
+    Query,
     UploadFile,
 )
 from pydantic import BaseModel, Field, field_validator
 
+from app.api.utils_api import get_combined_auth_dependency
 from app.core import ZeRAG
 from app.core.base import DeletionResult, DocProcessingStatus, DocStatus
 from app.core.utils import (
-    generate_track_id,
     compute_mdhash_id,
+    generate_track_id,
+    get_pinyin_sort_key,
+    logger,
     sanitize_text_for_encoding,
 )
-from app.api.utils_api import get_combined_auth_dependency
+
 from ..config import global_args
 
 
@@ -369,7 +372,9 @@ class BatchInsertResponse(BaseModel):
     """
 
     total_files: int = Field(description="Total number of files in the batch")
-    results: List[InsertResponse] = Field(description="Individual results for each file")
+    results: List[InsertResponse] = Field(
+        description="Individual results for each file"
+    )
 
     class Config:
         json_schema_extra = {
@@ -1279,11 +1284,11 @@ def _extract_xlsx(file_bytes: bytes) -> str:
 
 
 async def pipeline_enqueue_file(
-    rag: ZeRAG, 
-    file_path: Path, 
+    rag: ZeRAG,
+    file_path: Path,
     track_id: str = None,
     graph_mode: bool = True,
-    multi_modal: bool = False
+    multi_modal: bool = False,
 ) -> tuple[bool, str]:
     """Insert Multi-file Type Support: extract text and enqueue for RAG indexing.
 
@@ -1452,9 +1457,7 @@ async def pipeline_enqueue_file(
                             "file_size": file_size,
                         }
                     ]
-                    await rag.apipeline_enqueue_error_documents(
-                        error_files, track_id
-                    )
+                    await rag.apipeline_enqueue_error_documents(error_files, track_id)
                     logger.error(
                         f"[File Extraction]File {file_path.name} is not valid UTF-8 encoded text. Please convert it to UTF-8 before processing."
                     )
@@ -1508,9 +1511,7 @@ async def pipeline_enqueue_file(
                             "file_size": file_size,
                         }
                     ]
-                    await rag.apipeline_enqueue_error_documents(
-                        error_files, track_id
-                    )
+                    await rag.apipeline_enqueue_error_documents(error_files, track_id)
                     logger.error(
                         f"[File Extraction]Error processing PDF {file_path.name}: {str(e)}"
                     )
@@ -1559,9 +1560,7 @@ async def pipeline_enqueue_file(
                             "file_size": file_size,
                         }
                     ]
-                    await rag.apipeline_enqueue_error_documents(
-                        error_files, track_id
-                    )
+                    await rag.apipeline_enqueue_error_documents(error_files, track_id)
                     logger.error(
                         f"[File Extraction]Error processing DOCX {file_path.name}: {str(e)}"
                     )
@@ -1610,9 +1609,7 @@ async def pipeline_enqueue_file(
                             "file_size": file_size,
                         }
                     ]
-                    await rag.apipeline_enqueue_error_documents(
-                        error_files, track_id
-                    )
+                    await rag.apipeline_enqueue_error_documents(error_files, track_id)
                     logger.error(
                         f"[File Extraction]Error processing PPTX {file_path.name}: {str(e)}"
                     )
@@ -1661,9 +1658,7 @@ async def pipeline_enqueue_file(
                             "file_size": file_size,
                         }
                     ]
-                    await rag.apipeline_enqueue_error_documents(
-                        error_files, track_id
-                    )
+                    await rag.apipeline_enqueue_error_documents(error_files, track_id)
                     logger.error(
                         f"[File Extraction]Error processing XLSX {file_path.name}: {str(e)}"
                     )
@@ -1720,9 +1715,12 @@ async def pipeline_enqueue_file(
             try:
                 # Build metadata payload
                 metadata_list = [{"graph_mode": graph_mode, "multi_modal": multi_modal}]
-                
+
                 await rag.apipeline_enqueue_documents(
-                    content, file_paths=file_path.name, track_id=track_id, metadata=metadata_list
+                    content,
+                    file_paths=file_path.name,
+                    track_id=track_id,
+                    metadata=metadata_list,
                 )
 
                 logger.info(
@@ -1811,7 +1809,7 @@ async def _pipeline_index_file_mineru(
 ):
     """Process a PDF file through MinerU (via MultiRAG.process_document_complete).
 
-    Uses CPU backend (-b pipeline) so no GPU is required.
+    Uses GPU if available, falls back to CPU if not.
     Falls back to the standard pypdf pipeline on any error.
 
     Args:
@@ -1827,15 +1825,30 @@ async def _pipeline_index_file_mineru(
         if init_result and not init_result.get("success", True):
             raise RuntimeError(init_result.get("error", "MultiRAG init failed"))
 
+        import torch
+
+        cuda_available = torch.cuda.is_available()
+        logger.info(f"[GPU] CUDA available = {cuda_available}")
+
+        if cuda_available:
+            mineru_backend = "pipeline"
+            mineru_device = "cuda"
+            logger.info(f"[MINERU] backend = {mineru_backend}")
+            logger.info(f"[MINERU] device = {mineru_device}")
+            logger.info("[MINERU] GPU mode enabled")
+        else:
+            mineru_backend = "pipeline"
+            mineru_device = "cpu"
+            logger.info("[MINERU] WARNING: GPU unavailable, CPU fallback used")
+
         # process_document_complete handles: parse → insert text → insert multimodal
-        # backend="pipeline" forces CPU mode in MinerU
         await multi_rag.process_document_complete(
             file_path=str(file_path),
             output_dir=multi_rag.config.parser_output_dir,
             parse_method=multi_rag.config.parse_method,
             display_stats=False,
-            # Pass CPU backend hint through kwargs → forwarded to MineruParser
-            backend="pipeline",
+            backend=mineru_backend,
+            device=mineru_device,
         )
         logger.info(f"[MinerU] Successfully processed {file_path.name}")
 
@@ -1850,11 +1863,11 @@ async def _pipeline_index_file_mineru(
 
 
 async def pipeline_index_file(
-    rag: ZeRAG, 
-    file_path: Path, 
+    rag: ZeRAG,
+    file_path: Path,
     track_id: str = None,
     graph_mode: bool = True,
-    multi_modal: bool = False
+    multi_modal: bool = False,
 ):
     """Index a file with track_id
 
@@ -1917,7 +1930,7 @@ async def pipeline_index_texts(
     file_sources: List[str] = None,
     track_id: str = None,
     graph_mode: bool = True,
-    multi_modal: bool = False
+    multi_modal: bool = False,
 ):
     """Index a list of texts with track_id
 
@@ -1937,10 +1950,12 @@ async def pipeline_index_texts(
                 file_sources.append("unknown_source")
                 for _ in range(len(file_sources), len(texts))
             ]
-            
+
     # Build metadata payloads for each text
-    metadata_list = [{"graph_mode": graph_mode, "multi_modal": multi_modal} for _ in texts]
-    
+    metadata_list = [
+        {"graph_mode": graph_mode, "multi_modal": multi_modal} for _ in texts
+    ]
+
     await rag.apipeline_enqueue_documents(
         input=texts, file_paths=file_sources, track_id=track_id, metadata=metadata_list
     )
@@ -2257,18 +2272,25 @@ async def background_delete_documents(
 
 
 def create_document_routes(
-    rag: ZeRAG, doc_manager: DocumentManager, api_key: Optional[str] = None, multi_rag=None
+    rag: ZeRAG,
+    doc_manager: DocumentManager,
+    api_key: Optional[str] = None,
+    multi_rag=None,
 ):
     # Attach dynamic file processor if MultiRAG is available
     if multi_rag is not None:
-        async def dynamic_processor(file_path: str, doc_id: str = None, track_id: str = None):
+
+        async def dynamic_processor(
+            file_path: str, doc_id: str = None, track_id: str = None
+        ):
             logger.info(f"[MinerU] Dynamically processing {file_path}")
             init_result = await multi_rag._ensure_zerag_initialized()
             if init_result and not init_result.get("success", True):
                 raise RuntimeError(init_result.get("error", "MultiRAG init failed"))
-            
+
             # Fallback path resolution for older database entries that only stored the filename
             from pathlib import Path
+
             resolved_path = Path(file_path)
             if not resolved_path.exists():
                 input_dir_path = doc_manager.input_dir / file_path
@@ -2286,7 +2308,7 @@ def create_document_routes(
                 display_stats=False,
                 doc_id=doc_id,
             )
-            
+
         rag.file_processor_func = dynamic_processor
 
     # Create combined auth dependency for document routes
@@ -2332,10 +2354,7 @@ def create_document_routes(
                 detail=f"Unsupported file type. Supported types: {doc_manager.supported_extensions}",
             )
 
-        if (
-            global_args.max_upload_size is not None
-            and global_args.max_upload_size > 0
-        ):
+        if global_args.max_upload_size is not None and global_args.max_upload_size > 0:
             file_size = getattr(file, "size", None)
             if file_size is not None and file_size > global_args.max_upload_size:
                 raise HTTPException(
@@ -2395,7 +2414,9 @@ def create_document_routes(
             try:
                 file_path.unlink()
             except Exception as cleanup_error:
-                logger.error(f"Error cleaning up oversized file {safe_filename}: {cleanup_error}")
+                logger.error(
+                    f"Error cleaning up oversized file {safe_filename}: {cleanup_error}"
+                )
             raise HTTPException(
                 status_code=413,
                 detail=f"File too large. Maximum size: {global_args.max_upload_size / 1024 / 1024:.1f}MB, uploaded: {bytes_written / 1024 / 1024:.1f}MB",
@@ -2403,10 +2424,20 @@ def create_document_routes(
 
         track_id = generate_track_id("upload")
         ext = file_path.suffix.lower()
-        mineru_supported_exts = {".pdf", ".docx", ".doc", ".ppt", ".pptx", ".xls", ".xlsx"}
+        mineru_supported_exts = {
+            ".pdf",
+            ".docx",
+            ".doc",
+            ".ppt",
+            ".pptx",
+            ".xls",
+            ".xlsx",
+        }
 
         if multi_modal and multi_rag is not None and ext in mineru_supported_exts:
-            logger.info(f"[MinerU] Enqueuing '{safe_filename}' for dynamic multimodal processing")
+            logger.info(
+                f"[MinerU] Enqueuing '{safe_filename}' for dynamic multimodal processing"
+            )
             success, final_track_id = await rag.apipeline_enqueue_file_reference(
                 str(file_path.absolute()),
                 track_id=track_id,
@@ -2453,7 +2484,7 @@ def create_document_routes(
                                     "format": "binary",
                                     "description": "Choose file to upload",
                                 }
-                            }
+                            },
                         }
                     }
                 }
@@ -2462,7 +2493,9 @@ def create_document_routes(
     )
     async def upload_to_input_dir(
         background_tasks: BackgroundTasks,
-        file: UploadFile = File(..., description="Upload file(s)", media_type="application/octet-stream"),
+        file: UploadFile = File(
+            ..., description="Upload file(s)", media_type="application/octet-stream"
+        ),
         multi_modal: bool = Query(
             default=True,
             description="If True, routes to the MultiRAG/MinerU pipeline. If False, uses multi-file extraction (pypdf/docx/pptx).",
@@ -2846,9 +2879,9 @@ def create_document_routes(
         """
         try:
             from app.core.kg.shared_storage import (
+                get_all_update_flags_status,
                 get_namespace_data,
                 get_namespace_lock,
-                get_all_update_flags_status,
             )
 
             pipeline_status = await get_namespace_data(
@@ -3212,7 +3245,9 @@ def create_document_routes(
         status_filter: Optional[DocStatus] = Query(None),
         page: int = Query(1, ge=1),
         page_size: int = Query(50, ge=1, le=100),
-        sort_field: Literal["created_at", "updated_at", "id", "file_path"] = Query("updated_at"),
+        sort_field: Literal["created_at", "updated_at", "id", "file_path"] = Query(
+            "updated_at"
+        ),
         sort_direction: Literal["asc", "desc"] = Query("desc"),
     ) -> PaginatedDocsResponse:
         """
@@ -3223,7 +3258,7 @@ def create_document_routes(
             page=page,
             page_size=page_size,
             sort_field=sort_field,
-            sort_direction=sort_direction
+            sort_direction=sort_direction,
         )
         return await _get_documents_paginated_logic(request)
 

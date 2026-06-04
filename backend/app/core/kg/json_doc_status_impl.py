@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass
 from typing import Any, Union, final
 
 from app.core.base import (
@@ -7,20 +7,21 @@ from app.core.base import (
     DocStatus,
     DocStatusStorage,
 )
+from app.core.exceptions import StorageNotInitializedError
 from app.core.utils import (
+    get_pinyin_sort_key,
     load_json,
     logger,
     write_json,
-    get_pinyin_sort_key,
 )
-from app.core.exceptions import StorageNotInitializedError
+
 from .shared_storage import (
+    clear_all_update_flags,
+    get_data_init_lock,
     get_namespace_data,
     get_namespace_lock,
-    get_data_init_lock,
     get_update_flag,
     set_all_update_flags,
-    clear_all_update_flags,
     try_initialize_namespace,
 )
 
@@ -264,11 +265,14 @@ class JsonDocStatusStorage(DocStatusStorage):
         async with self._storage_lock:
             for doc_id, doc_data in self._data.items():
                 # Apply status filter
-                if (
-                    status_filter is not None
-                    and doc_data.get("status") != status_filter.value
-                ):
-                    continue
+                if status_filter is not None and status_filter != 0:
+                    filter_val = (
+                        status_filter.value
+                        if hasattr(status_filter, "value")
+                        else status_filter
+                    )
+                    if doc_data.get("status") != filter_val:
+                        continue
 
                 try:
                     # Prepare document data

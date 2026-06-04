@@ -641,8 +641,11 @@ class MongoDocStatusStorage(DocStatusStorage):
 
         # Build query filter
         query_filter = {}
-        if status_filter is not None:
-            query_filter["status"] = status_filter.value
+        if status_filter is not None and status_filter != 0:
+            if hasattr(status_filter, "value"):
+                query_filter["status"] = status_filter.value
+            else:
+                query_filter["status"] = status_filter
 
         # Get total count
         total_count = await self._data.count_documents(query_filter)

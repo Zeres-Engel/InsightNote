@@ -48,9 +48,9 @@ class InvalidResponseError(Exception):
     pass
 
 
-@lru_cache(maxsize=8)
+@lru_cache(maxsize=32)
 def _get_gemini_client(
-    api_key: str, base_url: str | None, timeout: int | None = None
+    api_key: str, base_url: str | None, timeout: int | None = None, loop_id: int | None = None
 ) -> genai.Client:
     """
     Create (or fetch cached) Gemini client.
@@ -269,7 +269,13 @@ async def gemini_complete_if_cache(
     key = _ensure_api_key(api_key)
     # Convert timeout from seconds to milliseconds for Gemini API
     timeout_ms = timeout * 1000 if timeout else None
-    client = _get_gemini_client(key, base_url, timeout_ms)
+    import asyncio
+    try:
+        loop = asyncio.get_running_loop()
+        loop_id = id(loop)
+    except RuntimeError:
+        loop_id = None
+    client = _get_gemini_client(key, base_url, timeout_ms, loop_id=loop_id)
 
     history_block = _format_history_messages(history_messages)
     prompt_sections = []
@@ -539,7 +545,13 @@ async def gemini_embed(
     key = _ensure_api_key(api_key)
     # Convert timeout from seconds to milliseconds for Gemini API
     timeout_ms = timeout * 1000 if timeout else None
-    client = _get_gemini_client(key, base_url, timeout_ms)
+    import asyncio
+    try:
+        loop = asyncio.get_running_loop()
+        loop_id = id(loop)
+    except RuntimeError:
+        loop_id = None
+    client = _get_gemini_client(key, base_url, timeout_ms, loop_id=loop_id)
 
     # Prepare embedding configuration
     config_kwargs: dict[str, Any] = {}

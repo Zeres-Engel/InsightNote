@@ -1611,12 +1611,14 @@ def create_insightnote_routes(
 
         # Smart dynamic fallback / Real RAG query
         try:
-            if os.environ.get("WORKSPACE") != "test-workspace":
+            docs, total_count = await rag.doc_status.get_docs_paginated(0, 1)
+            if total_count > 0:
                 logger.info(
                     f"[QUERY] chat_history messages={len(request.chat_history or [])}"
                 )
                 param = QueryParam(
-                    mode="mix", conversation_history=request.chat_history or []
+                    mode=request.mode or "mix",
+                    conversation_history=request.chat_history or [],
                 )
                 result = await rag.aquery_llm(request.message, param=param)
 

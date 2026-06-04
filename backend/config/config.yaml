@@ -8,14 +8,14 @@ server:
 # LLM Configuration (Google Gemini)
 llm:
   binding: "gemini"
-  model: "gemini-2.5-flash"
+  model: "gemini-3.5-flash"
   api_key: "${GOOGLE_API_KEY}"
   base_url: "DEFAULT_GEMINI_ENDPOINT"
 
 # Embedding Configuration (Google Gemini)
 embedding:
   binding: "gemini"
-  model: "gemini-embedding-001"
+  model: "gemini-embedding-2"
   api_key: "${GOOGLE_API_KEY}"
   base_url: "DEFAULT_GEMINI_ENDPOINT"
 

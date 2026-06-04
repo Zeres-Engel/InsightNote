@@ -11,25 +11,24 @@ For Office documents (.doc, .docx, .ppt, .pptx), please convert them to PDF form
 
 from __future__ import annotations
 
-
-import os
-import hashlib
-import json
 import argparse
 import base64
+import hashlib
+import json
+import logging
+import os
 import subprocess
 import tempfile
-import logging
 from pathlib import Path
 from typing import (
+    Any,
     Dict,
+    Iterator,
     List,
     Optional,
-    Union,
     Tuple,
-    Any,
-    Iterator,
     TypeVar,
+    Union,
 )
 
 T = TypeVar("T")
@@ -286,11 +285,11 @@ class Parser:
 
             try:
                 from reportlab.lib.pagesizes import A4
-                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-                from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
                 from reportlab.lib.units import inch
                 from reportlab.pdfbase import pdfmetrics
                 from reportlab.pdfbase.ttfonts import TTFont
+                from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
                 support_chinese = True
                 try:
@@ -651,8 +650,38 @@ class MineruParser(Parser):
         # Use absolute paths to avoid CWD/path issues (e.g. MinerU FileBasedDataWriter on Windows)
         input_path_abs = str(Path(input_path).resolve())
         output_dir_abs = str(Path(output_dir).resolve())
+
+        # GPU / CUDA detection and logging
+        try:
+            import torch
+
+            cuda_available = torch.cuda.is_available()
+        except ImportError:
+            cuda_available = False
+
+        cls.logger.info(f"[GPU] CUDA available = {cuda_available}")
+        if cuda_available:
+            device = "cuda"
+            cls.logger.info("[MINERU] backend = pipeline")
+            cls.logger.info("[MINERU] device = cuda")
+            cls.logger.info("[MINERU] GPU mode enabled")
+        else:
+            device = "cpu"
+            cls.logger.warning("[MINERU] WARNING: GPU unavailable, CPU fallback used")
+            cls.logger.info("[MINERU] backend = pipeline")
+            cls.logger.info("[MINERU] device = cpu")
+
+        if not backend:
+            backend = "pipeline"
+
+        mineru_python = (
+            "C:\\Users\\nguye\\AppData\\Local\\Programs\\Python\\Python311\\python.exe"
+        )
+
         cmd = [
-            "mineru",
+            mineru_python,
+            "-m",
+            "mineru.cli.client",
             "-p",
             input_path_abs,
             "-o",
@@ -685,6 +714,11 @@ class MineruParser(Parser):
 
         # Handle and validate environment variables
         custom_env = kwargs.pop("env", None)
+        # Pop doc_id and other known non-MinerU parameters to avoid unexpected keyword argument errors
+        kwargs.pop("doc_id", None)
+        kwargs.pop("track_id", None)
+        kwargs.pop("workspace", None)
+        kwargs.pop("workspace_id", None)
 
         # Validate env if provided
         if custom_env is not None:
@@ -707,19 +741,21 @@ class MineruParser(Parser):
             # Prepare subprocess parameters to hide console window on Windows
             import platform
             import threading
-            from queue import Queue, Empty
+            from queue import Empty, Queue
 
             # Log the command being executed
             cls.logger.info(f"Executing mineru command: {' '.join(cmd)}")
 
-            env = None
+            env = os.environ.copy()
+            env["HF_HUB_DISABLE_SYMLINKS"] = "1"
             if custom_env:
-                env = os.environ.copy()
                 env.update(custom_env)
 
             # Set cwd so MinerU's relative paths (e.g. rag_storage\...) resolve correctly
             output_path = Path(output_dir_abs).resolve()
-            cwd = output_path.parents[2] if len(output_path.parents) >= 3 else Path.cwd()
+            cwd = (
+                output_path.parents[2] if len(output_path.parents) >= 3 else Path.cwd()
+            )
             subprocess_kwargs = {
                 "stdout": subprocess.PIPE,
                 "stderr": subprocess.PIPE,
@@ -1007,13 +1043,51 @@ class MineruParser(Parser):
             base_output_dir.mkdir(parents=True, exist_ok=True)
 
             # Run mineru command
-            self._run_mineru_command(
-                input_path=pdf_path,
-                output_dir=base_output_dir,
-                method=method,
-                lang=lang,
-                **kwargs,
-            )
+            try:
+                self._run_mineru_command(
+                    input_path=pdf_path,
+                    output_dir=base_output_dir,
+                    method=method,
+                    lang=lang,
+                    **kwargs,
+                )
+            except Exception as cmd_error:
+                # Support recovery when some outputs are missing but other text outputs (json/md) are present!
+                self.logger.warning(
+                    f"MinerU command failed or had warnings: {cmd_error}. Checking if core text outputs exist for recovery..."
+                )
+                backend = kwargs.get("backend") or ""
+                mapped_method = method
+                if backend.startswith("vlm-"):
+                    mapped_method = "vlm"
+                elif backend.startswith("hybrid-"):
+                    mapped_method = "hybrid_auto"
+
+                # Check if generated files exist
+                file_stem_subdir = base_output_dir / name_without_suff
+                recovered_ok = False
+                if file_stem_subdir.is_dir():
+                    for subdir in file_stem_subdir.iterdir():
+                        if (
+                            subdir.is_dir()
+                            and (
+                                subdir / f"{name_without_suff}_content_list.json"
+                            ).exists()
+                        ):
+                            recovered_ok = True
+                            break
+                if not recovered_ok:
+                    md_f = base_output_dir / f"{name_without_suff}.md"
+                    json_f = base_output_dir / f"{name_without_suff}_content_list.json"
+                    if md_f.exists() and json_f.exists():
+                        recovered_ok = True
+
+                if recovered_ok:
+                    self.logger.info(
+                        "Core MinerU text outputs found. Successfully recovered from error!"
+                    )
+                else:
+                    raise cmd_error
 
             # Read the generated output files
             # Map backend to expected output directory name for better compatibility
