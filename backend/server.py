@@ -132,8 +132,8 @@ def create_embedding_func() -> EmbeddingFunc:
             func=lambda texts: ollama_embed(texts, model=model),
         )
     elif binding == "gemini":
-        # gemini-embedding-001 has 768 dim, text-embedding-004 has 768 dim
-        dim = 768
+        # gemini-embedding-001 has 3072 dim, text-embedding-004 has 768 dim
+        dim = 3072 if "gemini-embedding-001" in model else 768
         return EmbeddingFunc(
             embedding_dim=dim,
             max_token_size=2048,
