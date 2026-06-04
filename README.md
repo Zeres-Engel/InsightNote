@@ -116,7 +116,8 @@ For deep development configurations and architecture details, refer to:
 *   📁 **[`frontend/docs/API_CONTRACT.md`](frontend/docs/API_CONTRACT.md)**: Full API specifications (parameters, payloads, codes).
 *   📁 **[`frontend/docs/DEVELOPMENT_GUIDE.md`](frontend/docs/DEVELOPMENT_GUIDE.md)**: Frontend components layout, state bindings, and WebGL setups.
 *   📁 **[`backend/docs/BACKEND_GUIDE.md`](backend/docs/BACKEND_GUIDE.md)**: Backend directory structure, routing schemas, and ZeRAG core.
-*   📁 **[`backend/docs/MULTIMODAL_PARSING_AND_HIERARCHICAL_GRAPH.md`](backend/docs/MULTIMODAL_PARSING_AND_HIERARCHICAL_GRAPH.md)**: Layout-aware parsing, bounding box coordinates (`bbox`), and hierarchical chunk models.
+*   📁 **[`backend/docs/MULTIMODAL_PARSING.md`](backend/docs/MULTIMODAL_PARSING.md)**: Layout-aware multimodal parsing, LaTeX formulas, and table reconstruction using MinerU.
+*   📁 **[`backend/docs/HIERARCHICAL_CHUNKING.md`](backend/docs/HIERARCHICAL_CHUNKING.md)**: Bounding box coordinates (`bbox`), reading order sorting, and parent-child tree hierarchy mapping in Neo4j.
 
 ---
 
