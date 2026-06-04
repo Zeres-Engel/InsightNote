@@ -52,6 +52,7 @@ file_handler.setFormatter(
     )
 )
 logging.getLogger().addHandler(file_handler)
+logger.info("ZeRAG Integrated Server main module loaded successfully.")
 
 # --- LLM & Embedding Initialization Logic ---
 
