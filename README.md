@@ -118,6 +118,7 @@ For deep development configurations and architecture details, refer to:
 *   📁 **[`backend/docs/BACKEND_GUIDE.md`](backend/docs/BACKEND_GUIDE.md)**: Backend directory structure, routing schemas, and ZeRAG core.
 *   📁 **[`backend/docs/MULTIMODAL_PARSING.md`](backend/docs/MULTIMODAL_PARSING.md)**: Layout-aware multimodal parsing, LaTeX formulas, and table reconstruction using MinerU.
 *   📁 **[`backend/docs/HIERARCHICAL_CHUNKING.md`](backend/docs/HIERARCHICAL_CHUNKING.md)**: Bounding box coordinates (`bbox`), reading order sorting, and parent-child tree hierarchy mapping in Neo4j.
+*   📁 **[`backend/docs/QUERY.md`](backend/docs/QUERY.md)**: Multi-turn chat history resolution and the four distinct RAG query modes (`naive`, `local`, `global`, `mix`).
 
 ---
 
