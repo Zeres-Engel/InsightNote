@@ -8,7 +8,7 @@ This specification document details the design and implementation of InsightNote
 
 InsightNote transitions documents from raw flat text chunks to a highly semantic, structural knowledge graph. Below is the architectural diagram mapping the Graph RAG query routing and the three core chunking methodologies (Fixed size, Hierarchical, and Semantic) processed by the ingestion engine:
 
-![Graph RAG Ingestion & Chunking Methods](images/RAG Architecture.png)
+![Graph RAG Ingestion & Chunking Methods](images/RAGArchitecture.png)
 
 *   **Fixed-Size Chunking**: Standard sliding character/token count splitting. It cuts text blindly, breaking sentences and losing visual section hierarchies.
 *   **Hierarchical Chunking**: The core layout-aware method implemented in InsightNote. It utilizes visual bounding box boundaries to group texts logically under parent section headers in a structural tree.

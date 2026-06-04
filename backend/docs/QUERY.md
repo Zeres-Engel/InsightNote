@@ -95,7 +95,7 @@ To validate the accuracy, answer quality, and generation latency of the differen
 
 Below is the benchmark metrics comparison showing retrieval completeness, accuracy indices, and average processing speeds across Naive, Local, Global, and Mix Modes:
 
-![Query Mode Benchmark](images/Query Mode Benchmark.png)
+![Query Mode Benchmark](images/QueryModeBenchmark.png)
 
 ### Key Evaluation Discoveries:
 1.  **Mix Mode (`mix`)** achieves the highest overall accuracy and citation completeness by combining the topological connections of Neo4j with the dense semantic vector search of Qdrant. It is the optimal setting for corporate operations.
