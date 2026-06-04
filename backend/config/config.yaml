@@ -24,7 +24,7 @@ reranker:
   binding: "${RERANKER_BINDING:-jina}"
   model: "${RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}"
   base_url: "${RERANKER_BASE_URL:-https://v98store.com/v1/rerank}"
-  api_key: "${RERANKER_API_KEY:-${OPENAI_API_KEY}}"
+  api_key: "${RERANKER_API_KEY:-${GEMINI_API_KEY:-${OPENAI_API_KEY}}}"
   max_tokens: 4096
 
 # Storage Backends Selection
