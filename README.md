@@ -14,15 +14,19 @@ Developed using your existing high-performance **ZeRAG** (Zero-effort Retrieval-
 Watch the pipeline parse layout blocks, perform chunking, extract semantic entities and relationships, and index them into Neo4j and Qdrant in real-time.
 ![InsightNote Interactive Ingestion](docs/images/ingest.gif)
 
-### 2. Redesigned Glassmorphic Dashboard
+### 2. Layout-Aware Multimodal Processing
+InsightNote parses complex layouts (multi-column text, tables, and sections) with sub-pixel coordinate precision (`bbox` coordinates) using MinerU to construct hierarchical knowledge representations.
+![InsightNote Multimodal Processing](docs/images/Multimodal-Processing.png)
+
+### 3. Redesigned Glassmorphic Dashboard
 Our premium landing dashboard provides clear, high-tech metrics summarizing Active Notebooks, Ingested Documents, and Live Database sync metrics.
 ![InsightNote Redesigned Dashboard](docs/images/dashboard.png)
 
-### 3. The 3-Column Interactive Workspace
+### 4. The 3-Column Interactive Workspace
 Ingest files on the left, Q&A with conversational LLM reasoning in the middle, and watch your 3D Knowledge Graph uon-luon (curve and glow) on the right!
 ![InsightNote 3-Column Workspace with 3D Graph](docs/images/workspace.png)
 
-### 4. Interlocking 3D Navigation Guide
+### 5. Interlocking 3D Navigation Guide
 Rotate, Pan, Zoom, and click nodes smoothly while taking advantage of our helpful built-in navigation guide overlay.
 ![InsightNote 3D Navigation Guide](docs/images/navigation_guide.png)
 
@@ -70,6 +74,35 @@ Rotate, Pan, Zoom, and click nodes smoothly while taking advantage of our helpfu
 
 ---
 
+## 🌳 Advanced Core Architecture: Layout-Aware Parsing & Hierarchical Chunking
+
+Unlike traditional naive character-splitting RAG systems, InsightNote models documents as highly structured **Hierarchical Knowledge Trees** utilizing sub-pixel visual coordinate bounding boxes (`bbox`) extracted via **MinerU**.
+
+```mermaid
+graph TD
+    subgraph Multi_Service_Layer [Tri-Service Storage Orchestration]
+        MongoDB[(1. MongoDB<br>Metadata & Job Status)]
+        Neo4j[(2. Neo4j GraphDB<br>Hierarchical Chunk Tree)]
+        Qdrant[(3. Qdrant VectorDB<br>1536-D Semantic Vectors)]
+    end
+    
+    subgraph Pipeline_Processing [Layout-Aware Coordinate Processing Pipeline]
+        PDF[Multimodal Document PDF] -->|MinerU Parse| Blocks[Visual Layout Blocks]
+        Blocks -->|Sort & Group by bbox x/y| HierarchicalTree[Hierarchical Parent-Child Tree]
+        
+        HierarchicalTree -->|Sync Chunks & Bboxes| Neo4j
+        HierarchicalTree -->|Index Text Embeddings| Qdrant
+        HierarchicalTree -->|Track Lifecycle Status| MongoDB
+    end
+```
+
+### 💎 Key Architectural Breakthroughs:
+1.  **Coordinate-Based Bounding Boxes (`bbox`)**: Raw layout structures are extracted using normalized coordinates `[x_min, y_min, x_max, y_max]` to distinguish headers, titles, section headings, and table paragraphs.
+2.  **Parent-Child Hierarchical Traversals**: Rather than flat, isolated text segments, sections are connected in Neo4j (e.g., `Document ➔ Title Section ➔ Sub Section ➔ Chunk`). If a paragraph chunk is retrieved, the RAG engine traverses upwards to capture the structural parent header, completely preventing LLM context hallucinations.
+3.  **Entity-Chunk Interlocking**: Semantically extracted entities (extracted dynamically) draw `[:MENTIONS]` edges back to their source coordinates, guaranteeing absolute citation groundedness.
+
+---
+
 ## 🛠 Tech Stack
 
 *   **Frontend**: React (Vite) + TypeScript + Tailwind CSS + Lucide Icons + Framer Motion + `react-force-graph-3d` (WebGL/Three.js@0.184.0).
@@ -83,6 +116,7 @@ For deep development configurations and architecture details, refer to:
 *   📁 **[`frontend/docs/API_CONTRACT.md`](frontend/docs/API_CONTRACT.md)**: Full API specifications (parameters, payloads, codes).
 *   📁 **[`frontend/docs/DEVELOPMENT_GUIDE.md`](frontend/docs/DEVELOPMENT_GUIDE.md)**: Frontend components layout, state bindings, and WebGL setups.
 *   📁 **[`backend/docs/BACKEND_GUIDE.md`](backend/docs/BACKEND_GUIDE.md)**: Backend directory structure, routing schemas, and ZeRAG core.
+*   📁 **[`backend/docs/MULTIMODAL_PARSING_AND_HIERARCHICAL_GRAPH.md`](backend/docs/MULTIMODAL_PARSING_AND_HIERARCHICAL_GRAPH.md)**: Layout-aware parsing, bounding box coordinates (`bbox`), and hierarchical chunk models.
 
 ---
 
