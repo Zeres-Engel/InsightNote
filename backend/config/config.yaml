@@ -5,26 +5,26 @@ server:
   working_dir: "./rag_storage"
   workspace: "default"
 
-# LLM Configuration
+# LLM Configuration (Google Gemini)
 llm:
-  binding: "${LLM_BINDING:-openai}"
-  model: "${LLM_MODEL:-qwen-plus}"
-  api_key: "${GEMINI_API_KEY:-${OPENAI_API_KEY}}"
-  base_url: "${LLM_BASE_URL:-https://v98store.com/v1}"
+  binding: "gemini"
+  model: "gemini-2.5-flash"
+  api_key: "${GOOGLE_API_KEY}"
+  base_url: "DEFAULT_GEMINI_ENDPOINT"
 
-# Embedding Configuration
+# Embedding Configuration (Google Gemini)
 embedding:
-  binding: "${EMBEDDING_BINDING:-openai}"
-  model: "${EMBEDDING_MODEL:-text-embedding-3-small}"
-  api_key: "${GEMINI_API_KEY:-${OPENAI_API_KEY}}"
-  base_url: "${EMBEDDING_BASE_URL:-https://v98store.com/v1}"
+  binding: "gemini"
+  model: "gemini-embedding-001"
+  api_key: "${GOOGLE_API_KEY}"
+  base_url: "DEFAULT_GEMINI_ENDPOINT"
 
-# Reranker Configuration
+# Reranker Configuration (Jina or Google, using GOOGLE_API_KEY or OPENAI_API_KEY)
 reranker:
-  binding: "${RERANKER_BINDING:-jina}"
-  model: "${RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}"
-  base_url: "${RERANKER_BASE_URL:-https://v98store.com/v1/rerank}"
-  api_key: "${RERANKER_API_KEY:-${GEMINI_API_KEY:-${OPENAI_API_KEY}}}"
+  binding: "jina"
+  model: "BAAI/bge-reranker-v2-m3"
+  base_url: "https://v98store.com/v1/rerank"
+  api_key: "${OPENAI_API_KEY}"
   max_tokens: 4096
 
 # Storage Backends Selection
