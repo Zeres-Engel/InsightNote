@@ -25,6 +25,7 @@ from app.api.utils_api import get_combined_auth_dependency
 from app.core import ZeRAG
 from app.core.document.config import MultiRAGConfig
 from app.core.document.multirag import MultiRAG
+from app.core.llm.gemini import gemini_complete_if_cache, gemini_embed
 from app.core.llm.ollama import ollama_embed, ollama_model_complete
 from app.core.llm.openai import openai_complete_if_cache, openai_embed
 from app.core.utils import EmbeddingFunc
@@ -90,6 +91,22 @@ def create_llm_func() -> Callable:
             )
 
         return ollama_llm
+    elif binding == "gemini":
+
+        async def gemini_llm(
+            prompt, system_prompt=None, history_messages=None, **kwargs
+        ):
+            return await gemini_complete_if_cache(
+                model=model,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                history_messages=history_messages,
+                api_key=api_key,
+                base_url=config.LLM_BASE_URL,
+                **kwargs,
+            )
+
+        return gemini_llm
     raise ValueError(f"Unsupported LLM binding: {binding}")
 
 
@@ -113,6 +130,17 @@ def create_embedding_func() -> EmbeddingFunc:
             max_token_size=8192,
             model_name=model,
             func=lambda texts: ollama_embed(texts, model=model),
+        )
+    elif binding == "gemini":
+        # gemini-embedding-001 has 768 dim, text-embedding-004 has 768 dim
+        dim = 768
+        return EmbeddingFunc(
+            embedding_dim=dim,
+            max_token_size=2048,
+            model_name=model,
+            func=lambda texts: gemini_embed(
+                texts, model=model, api_key=api_key, base_url=config.EMBEDDING_BASE_URL
+            ),
         )
     raise ValueError(f"Unsupported Embedding binding: {binding}")
 
