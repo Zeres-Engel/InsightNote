@@ -10,21 +10,21 @@ Developed using your existing high-performance **ZeRAG** (Zero-effort Retrieval-
 
 ## 📸 Visual Previews
 
-### 1. Redesigned Glassmorphic Dashboard
+### 1. Live Progressive Document Ingestion (Demo Thumbnail)
+Watch the pipeline parse layout blocks, perform chunking, extract semantic entities and relationships, and index them into Neo4j and Qdrant in real-time.
+![InsightNote Interactive Ingestion](docs/images/ingest.gif)
+
+### 2. Redesigned Glassmorphic Dashboard
 Our premium landing dashboard provides clear, high-tech metrics summarizing Active Notebooks, Ingested Documents, and Live Database sync metrics.
 ![InsightNote Redesigned Dashboard](docs/images/dashboard.png)
 
-### 2. The 3-Column Interactive Workspace
+### 3. The 3-Column Interactive Workspace
 Ingest files on the left, Q&A with conversational LLM reasoning in the middle, and watch your 3D Knowledge Graph uon-luon (curve and glow) on the right!
 ![InsightNote 3-Column Workspace with 3D Graph](docs/images/workspace.png)
 
-### 3. Interlocking 3D Navigation Guide
+### 4. Interlocking 3D Navigation Guide
 Rotate, Pan, Zoom, and click nodes smoothly while taking advantage of our helpful built-in navigation guide overlay.
 ![InsightNote 3D Navigation Guide](docs/images/navigation_guide.png)
-
-### 4. Live Progressive Document Ingestion
-Watch the pipeline parse layout blocks, perform chunking, extract semantic entities and relationships, and index them into Neo4j and Qdrant in real-time.
-![InsightNote Interactive Ingestion](docs/images/ingest.gif)
 
 ---
 
