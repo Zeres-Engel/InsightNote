@@ -115,6 +115,8 @@ graph TD
 For deep development configurations and architecture details, refer to:
 *   📁 **[`frontend/docs/API_CONTRACT.md`](frontend/docs/API_CONTRACT.md)**: Full API specifications (parameters, payloads, codes).
 *   📁 **[`frontend/docs/DEVELOPMENT_GUIDE.md`](frontend/docs/DEVELOPMENT_GUIDE.md)**: Frontend components layout, state bindings, and WebGL setups.
+*   📁 **[`docs/GRAPH_VISUALIZATION.md`](docs/GRAPH_VISUALIZATION.md)**: Interactive WebGL 3D Knowledge Graph rendering, auto-rotation, link curvature, and smooth camera target focus.
+*   📁 **[`docs/GROUNDED_CITATIONS.md`](docs/GROUNDED_CITATIONS.md)**: Coordinate-aware citation linking (`bbox`), verification metrics, and collapsible progressive reasoning logs.
 *   📁 **[`backend/docs/BACKEND_GUIDE.md`](backend/docs/BACKEND_GUIDE.md)**: Backend directory structure, routing schemas, and ZeRAG core.
 *   📁 **[`backend/docs/MULTIMODAL_PARSING.md`](backend/docs/MULTIMODAL_PARSING.md)**: Layout-aware multimodal parsing, LaTeX formulas, and table reconstruction using MinerU.
 *   📁 **[`backend/docs/CHUNKING.md`](backend/docs/CHUNKING.md)**: Bounding box coordinates (`bbox`), reading order sorting, and parent-child tree hierarchy mapping in Neo4j.
