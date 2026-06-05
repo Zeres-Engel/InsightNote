@@ -50,18 +50,18 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
   const [dragActive, setDragActive] = useState(false);
   const [expandedJobs, setExpandedJobs] = useState<Record<string, boolean>>({});
   const stepLabels: Record<string, string> = {
-    load_file: "Load File",
-    mineru_parse: "Multimodal Document Processing",
-    document_understanding: "Multimodal Document Processing",
-    multi_modal_processing: "Multimodal Document Processing",
-    multi_modal_enrichment: "Document Understanding",
-    graph_rag_indexing: "Save Workspace",
-    workspace_save: "Save Workspace",
-    chunking: "Chunking",
-    entity_extraction: "Entity Extraction",
-    relationship_extraction: "Relationship Extraction",
-    neo4j_write: "Neo4j Write",
-    vector_index: "Vector Index",
+    load_file: "Source File Ingestion",
+    mineru_parse: "Layout-Aware PDF Extraction",
+    document_understanding: "Layout-Aware PDF Extraction",
+    multi_modal_processing: "Layout-Aware PDF Extraction",
+    multi_modal_enrichment: "Deep Layout Analysis & OCR",
+    graph_rag_indexing: "Vector & Graph Sync Orchestration",
+    workspace_save: "Vector & Graph Sync Orchestration",
+    chunking: "Hierarchical Parent-Child Chunking",
+    entity_extraction: "Semantic Entity Extraction",
+    relationship_extraction: "Meticulous Relation Mapping",
+    neo4j_write: "Neo4j Knowledge Graph Sync",
+    vector_index: "Qdrant Dense Vector Indexing",
   };
 
   const toggleJobExpanded = (srcId: string) => {
@@ -437,7 +437,8 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
                         className="flex items-center justify-between"
                       >
                         <span className="capitalize text-slate-500">
-                          {stepLabels[step.name] || step.name.replace(/_/g, " ")}
+                          {stepLabels[step.name] ||
+                            step.name.replace(/_/g, " ")}
                         </span>
                         <span className="font-bold">
                           {step.status === "done" && (
