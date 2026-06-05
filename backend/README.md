@@ -1,75 +1,96 @@
-# InsightNote Backend (ZeRAG)
+# 🧠 InsightNote Backend — Multi-Notebook GraphRAG Engine
 
-InsightNote is a powerful Retrieval-Augmented Generation (RAG) system. This repository contains the **ZeRAG** (Zero-effort Retrieval-Augmented Generation) backend, which integrates Knowledge Graphs and Vector Databases for state-of-the-art context retrieval.
+Welcome to the **InsightNote** backend. This is a high-performance, enterprise-grade **Multi-Notebook GraphRAG (Zero-effort Retrieval-Augmented Generation)** service. It acts as the intelligent co-pilot, transforming raw unstructured documents into structured, interconnected semantic knowledge networks.
 
-## Table of Contents
-- [Overview](#overview)
-- [Key Features](#key-features)
-- [Tech Stack](#tech-stack)
-- [System Architecture](#system-architecture)
-- [Maintenance: Docker Volume Reset](#maintenance-docker-volume-reset)
-- [Documentation](#documentation)
+Rather than running as a flat vector search, this backend orchestrates **Neo4j**, **Qdrant**, **MongoDB**, and **PostgreSQL** to achieve physical multi-workspace database isolation, parent-child context hierarchy traversals, and dynamic reasoning path highlights.
 
-## Overview
-ZeRAG is designed to overcome the limitations of traditional vector-only RAG systems. By maintaining a **Knowledge Graph** alongside a **Vector Database**, ZeRAG can understand complex relationships between entities, providing more accurate and conceptually relevant answers.
+---
 
-## Key Features
-- **Hybrid Retrieval**: Combines Graph traversal (Neo4j) with Vector similarity (Qdrant) for multi-dimensional context.
-- **Intelligent Keyword Extraction**: Uses LLMs to generate high-level and low-level keywords, optimizing the search space.
-- **Multi-modal Document Ingestion**: Integrated with `MinerU` for high-quality parsing of PDFs, images, and layouts.
-- **Workspace Isolation**: Securely partition data by project or tenant.
-- **Flexible Query Modes**:
-  - `mix`: Unified Graph + Vector retrieval (Recommended).
-  - `hybrid`: Global patterns + Local entity context.
-  - `local`: Deep dive into specific entities.
-  - `global`: High-level thematic analysis.
-  - `naive`: Standard vector search.
+## 🚀 Key Architectural Highlights
 
-## Tech Stack
-- **FastAPI**: Asynchronous high-performance web framework.
-- **Neo4j**: Primary Knowledge Graph storage.
-- **Qdrant**: High-density Vector database.
-- **MongoDB**: Metadata, document tracking, and LLM cache storage.
-- **LLM Support**: Built-in support for OpenAI (GPT-4o), Ollama, and Langfuse observability.
+### 🌲 Layout-Aware Coordinate Processing Pipeline
+Unlike traditional character-splitting chunkers, our ingestion pipeline processes document sections as highly structured **Hierarchical Knowledge Trees** utilizing visual bounding boxes (`bbox`) extracted via MinerU.
 
-## System Architecture
-For a detailed breakdown of the internal pipelines, extraction logic, and retrieval algorithms, please refer to our internal [ZeRAG Analysis Report](docs/analysis_zerag.md).
+```mermaid
+graph TD
+    subgraph Multi_Service_Layer [Tri-Service Storage Orchestration]
+        MongoDB[(1. MongoDB<br>Metadata & Job Status)]
+        Neo4j[(2. Neo4j GraphDB<br>Hierarchical Chunk Tree)]
+        Qdrant[(3. Qdrant VectorDB<br>1536-D Semantic Vectors)]
+    end
+    
+    subgraph Pipeline_Processing [Layout-Aware Coordinate Processing Pipeline]
+        PDF[Multimodal Document PDF/URL/Text] -->|Live User Ingestion| MinerU[MinerU Parse]
+        MinerU -->|Visual Layout Blocks| Blocks[Visual Layout Blocks]
+        Blocks -->|Sort & Group by bbox x/y| HierarchicalTree[Hierarchical Parent-Child Tree]
+        
+        HierarchicalTree -->|Sync Chunks & Bboxes| Neo4j
+        HierarchicalTree -->|Index Text Embeddings| Qdrant
+        HierarchicalTree -->|Track Lifecycle Status| MongoDB
+    end
+```
 
-## Maintenance: Docker Volume Reset
-Use these instructions if you need to wipe all processed data and LLM caches to start fresh.
+### 💎 Advanced Backend Features
+1.  **True Multi-Workspace Isolation 🆕**: Scalable namespace and label prefixing in Neo4j, MongoDB, and Qdrant under individual `notebook_id` keys.
+2.  **Conversational Thread Persistence 🆕**: Fully async database management of conversation threads and cascade deletions using **PostgreSQL** + `asyncpg`.
+3.  **Layout-Aware Visual Chunking**: Coordinate-based `bbox` tracking `[x_min, y_min, x_max, y_max]` allows the front-end to highlight exact visual citations.
+4.  **Premium Dual Retrieval + Reranking**: Integrates dense vector search in Qdrant with Cypher graph traversal in Neo4j. Employs advanced cross-encoders (**BAAI BGE-Reranker-M3**, **Jina AI**, or **Cohere**) to filter out noise.
+5.  **Graceful Degraded Mode**: If database clusters (Neo4j, Mongo, PostgreSQL) are down, the server automatically degrades into an in-memory/JSON sandbox mode without breaking compilation or raising red screens.
+
+---
+
+## 📂 Backend Documentation Map
+
+To explore the deep implementation details, please refer to:
+*   📘 **[`backend/docs/RAG_ARCHITECTURE.md`](docs/RAG_ARCHITECTURE.md)**: Dynamic Multi-workspace isolation, coordinate tracking, EventStream protocol, and the dual-engine retrieval flow.
+*   📘 **[`backend/docs/MULTIMODAL_PARSING.md`](docs/MULTIMODAL_PARSING.md)**: OCR parsing, LaTeX formulas, and table reconstruction using MinerU.
+*   📘 **[`backend/docs/CHUNKING.md`](docs/CHUNKING.md)**: Bounding box coordinate sorting and hierarchical parent-child mapping in Neo4j.
+*   📘 **[`backend/docs/QUERY.md`](docs/QUERY.md)**: Dynamic multi-turn history resolution and the four retrieval query modes (`mix`, `hybrid`, `local`, `global`).
+
+---
+
+## ⚡ Quick Start
+
+### 1. Requirements & Environments
+The RAG pipeline requires standard GPU resource configurations for layout extraction (MinerU) and embedding rerankers.
+*   **Production/Docker Stack**:
+    ```bash
+    docker compose up -d --build
+    ```
+*   **Backend Developer Environment (`gpu_env`)**:
+    Always activate the conda `gpu_env` when running unit or pipeline integration tests locally:
+    ```bash
+    conda activate gpu_env
+    cd backend
+    python server.py
+    ```
+
+### 2. Run Verification and Tests
+*   **Run Unit Tests**:
+    ```bash
+    pytest tests/unit/ -v
+    ```
+*   **Verify E2E Backend Pipeline**:
+    ```bash
+    python ../scripts/verify_backend_pipeline.py
+    ```
+
+---
+
+## ⚙️ Maintenance: Docker Volume Reset
+
+Use these instructions to wipe database volumes and start with a fresh slate.
 
 ### Volume Configuration
 | Service | Docker Volume Name | Data Stored |
-|---------|--------------------|-------------|
-| MongoDB | `insightnote_mongo_data` | Metadata, Doc Status, LLM Cache |
-| Neo4j   | `insightnote_neo4j_data` | Knowledge Graph (Entities & Relations) |
-| Qdrant  | `insightnote_qdrant_data` | Vector Embeddings (Chunks & Entities) |
+| :--- | :--- | :--- |
+| MongoDB | `insightnote_mongo_data` | Document lifecycle state, ingestion progress, and LLM caches |
+| Neo4j   | `insightnote_neo4j_data` | Knowledge Graph (Entities, Relations, chunk trees) |
+| Qdrant  | `insightnote_qdrant_data` | Semantic vector indices (text embeddings) |
+| Postgres| `insightnote_postgres_data`| Conversational history and multi-notebook workspaces |
 
 ### Reset Procedures
-
-#### 1. Full Environment Reset
-To remove all data and stop all services:
 ```bash
-docker-compose down -v
+# Bring the stack down and wipe all associated volumes
+docker compose down -v
 ```
-
-#### 2. Reset Individual Service
-If you only want to clear specific data (e.g., only the Knowledge Graph):
-```bash
-# Example: Reset Neo4j
-docker-compose stop neo4j
-docker volume rm insightnote_neo4j_data
-docker-compose up -d neo4j
-```
-
-#### 3. Clear Local File Cache
-If you are running the backend locally, you may also want to clear document storage:
-- **Windows (PowerShell)**: `Remove-Item -Recurse -Force rag_storage\*`
-- **Linux/macOS**: `rm -rf rag_storage/*`
-
-## Documentation
-- [System Analysis](docs/analysis_zerag.md)
-- [API Specification](http://localhost:8000/docs) (when running)
-
----
-© 2026 InsightNote Team
