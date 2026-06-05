@@ -19,7 +19,7 @@ interface SourcesPanelProps {
   notebook: Notebook;
   sources: SourceListItem[];
   loading: boolean;
-  pipelineJob: PipelineJobResponse | null;
+  pipelineJobs: Record<string, PipelineJobResponse>;
   onAddUrl: (url: string) => Promise<void>;
   onAddText: (text: string) => Promise<void>;
   onUploadFile: (file: File) => Promise<void>;
@@ -32,7 +32,7 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
   notebook,
   sources,
   loading,
-  pipelineJob,
+  pipelineJobs,
   onAddUrl,
   onAddText,
   onUploadFile,
@@ -48,6 +48,25 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
   const [noteTitle, setNoteTitle] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  const [expandedJobs, setExpandedJobs] = useState<Record<string, boolean>>({});
+  const stepLabels: Record<string, string> = {
+    load_file: "Load File",
+    mineru_parse: "Multimodal Document Processing",
+    document_understanding: "Multimodal Document Processing",
+    multi_modal_processing: "Multimodal Document Processing",
+    multi_modal_enrichment: "Document Understanding",
+    graph_rag_indexing: "Save Workspace",
+    workspace_save: "Save Workspace",
+    chunking: "Chunking",
+    entity_extraction: "Entity Extraction",
+    relationship_extraction: "Relationship Extraction",
+    neo4j_write: "Neo4j Write",
+    vector_index: "Vector Index",
+  };
+
+  const toggleJobExpanded = (srcId: string) => {
+    setExpandedJobs((prev) => ({ ...prev, [srcId]: !prev[srcId] }));
+  };
 
   const handleUrlSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,12 +97,15 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
+    if (e.target.files) {
       setIsSubmitting(true);
       try {
-        await onUploadFile(e.target.files[0]);
+        const filesArray = Array.from(e.target.files);
+        // Upload all selected files concurrently
+        await Promise.all(filesArray.map((file) => onUploadFile(file)));
       } finally {
         setIsSubmitting(false);
+        e.target.value = ""; // Clear file input
       }
     }
   };
@@ -102,10 +124,12 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+    if (e.dataTransfer.files) {
       setIsSubmitting(true);
       try {
-        await onUploadFile(e.dataTransfer.files[0]);
+        const filesArray = Array.from(e.dataTransfer.files);
+        // Upload all dropped files concurrently
+        await Promise.all(filesArray.map((file) => onUploadFile(file)));
       } finally {
         setIsSubmitting(false);
       }
@@ -192,17 +216,6 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
       <div className="p-4 bg-slate-950/40 border-b border-slate-800">
         {activeTab === "file" && (
           <div className="flex flex-col gap-2.5">
-            <button
-              onClick={triggerLoadExample}
-              disabled={isSubmitting || notebook.status === "processing"}
-              className="w-full bg-slate-950 hover:bg-emerald-950/25 border border-emerald-900/40 hover:border-emerald-500/40 text-emerald-400 font-bold text-xs py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-lg shadow-emerald-950/10"
-            >
-              <FileText className="w-4 h-4" />
-              Load example/Resume.pdf
-            </button>
-            <div className="text-[9px] text-slate-700 text-center font-bold tracking-widest uppercase">
-              OR
-            </div>
             <div
               onDragEnter={handleDrag}
               onDragOver={handleDrag}
@@ -218,24 +231,21 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
                 type="file"
                 id="file-upload"
                 accept=".pdf,.txt"
+                multiple
                 onChange={handleFileChange}
-                disabled={isSubmitting || notebook.status === "processing"}
+                disabled={notebook.status === "processing"}
                 className="hidden"
               />
               <label
                 htmlFor="file-upload"
                 className="flex flex-col items-center justify-center gap-1 text-center cursor-pointer w-full h-full"
               >
-                {isSubmitting ? (
-                  <Loader2 className="w-6 h-6 text-emerald-500 animate-spin" />
-                ) : (
-                  <UploadCloud className="w-6 h-6 text-slate-500" />
-                )}
+                <UploadCloud className="w-6 h-6 text-slate-500" />
                 <div className="text-[11px] font-semibold text-slate-350">
                   {isSubmitting ? "Uploading..." : "Upload custom PDF / TXT"}
                 </div>
                 <p className="text-[9px] text-slate-500">
-                  Click or drag & drop
+                  Click or drag & drop multiple files
                 </p>
               </label>
             </div>
@@ -310,55 +320,6 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
         )}
       </div>
 
-      {/* Progressive Pipeline Status Panel */}
-      {pipelineJob && (
-        <div className="p-4 bg-slate-950/80 border-b border-slate-800 space-y-3 animate-fade-in">
-          <div className="flex items-center justify-between text-xs font-bold text-slate-400">
-            <span className="flex items-center gap-1.5">
-              <Database className="w-4 h-4 text-indigo-400 animate-pulse" />
-              GraphRAG Pipeline Status
-            </span>
-            <span
-              className={`text-[10px] px-2 py-0.5 rounded font-extrabold uppercase ${
-                pipelineJob.status === "ready"
-                  ? "bg-emerald-950/40 text-emerald-400 border border-emerald-900/50"
-                  : "bg-indigo-950/40 text-indigo-400 border border-indigo-900/50 animate-pulse"
-              }`}
-            >
-              {pipelineJob.status}
-            </span>
-          </div>
-          <div className="space-y-1.5 bg-slate-900/50 p-2.5 rounded-lg border border-slate-850">
-            {pipelineJob.steps.map((step) => (
-              <div
-                key={step.name}
-                className="flex items-center justify-between text-[11px]"
-              >
-                <span className="capitalize text-slate-450">
-                  {step.name.replace(/_/g, " ")}
-                </span>
-                <span className="font-bold">
-                  {step.status === "done" && (
-                    <span className="text-emerald-500">✓ Completed</span>
-                  )}
-                  {step.status === "failed_fallback_used" && (
-                    <span className="text-amber-500">⚠ Fallback Active</span>
-                  )}
-                  {step.status === "processing" && (
-                    <span className="text-indigo-400 animate-pulse">
-                      ● Running...
-                    </span>
-                  )}
-                  {step.status === "pending" && (
-                    <span className="text-slate-650">○ Pending</span>
-                  )}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Sources List */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         <h3 className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
@@ -374,70 +335,152 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
             No sources ingested yet. Add one above!
           </div>
         ) : (
-          sources.map((src) => (
-            <div
-              key={src.id}
-              className="p-3 bg-slate-950/60 border border-slate-800/80 rounded-lg hover:border-slate-700/80 transition-colors duration-200"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0 flex-1">
-                  <h4
-                    className="text-sm font-semibold truncate text-slate-200"
-                    title={src.name}
+          sources.map((src) => {
+            const job = pipelineJobs[src.id];
+            const isProcessing =
+              src.status !== "ready" &&
+              src.status !== "failed" &&
+              src.status !== "active";
+            const isExpanded = expandedJobs[src.id] ?? false;
+
+            // Calculate progress percentage
+            let progressPct = 0;
+            if (job && job.percent !== undefined) {
+              progressPct = job.percent;
+            } else if (job && job.steps) {
+              const doneCount = job.steps.filter(
+                (s) => s.status === "done",
+              ).length;
+              progressPct = Math.round((doneCount / job.steps.length) * 100);
+            } else if (isProcessing) {
+              progressPct = 15; // default starting point
+            }
+
+            return (
+              <div
+                key={src.id}
+                className="p-3 bg-slate-950/60 border border-slate-800/80 rounded-lg hover:border-slate-700/80 transition-colors duration-200"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <h4
+                      className="text-sm font-semibold truncate text-slate-200"
+                      title={src.name}
+                    >
+                      {src.name}
+                    </h4>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded uppercase font-bold border border-slate-700/50">
+                        {src.type}
+                      </span>
+                      {src.status === "ready" || src.status === "active" ? (
+                        <span className="text-[10px] text-emerald-500 flex items-center gap-1 font-semibold">
+                          <CheckCircle2 className="w-3 h-3" />
+                          Ready
+                        </span>
+                      ) : src.status === "failed" ? (
+                        <span className="text-[10px] text-red-500 flex items-center gap-1 font-semibold">
+                          <XCircle className="w-3 h-3" />
+                          Failed
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => toggleJobExpanded(src.id)}
+                          className="text-[10px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-semibold cursor-pointer outline-none border-none bg-transparent"
+                        >
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          Indexing ({progressPct}%)
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => onDeleteSource(src.id)}
+                    title="Delete Document"
+                    className="p-1 hover:bg-red-950/40 text-slate-500 hover:text-red-400 rounded transition duration-150 cursor-pointer flex-shrink-0"
                   >
-                    {src.name}
-                  </h4>
-                  <div className="flex items-center gap-2 mt-1">
-                    <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded uppercase font-bold border border-slate-700/50">
-                      {src.type}
-                    </span>
-                    {src.status === "ready" || src.status === "active" ? (
-                      <span className="text-[10px] text-emerald-500 flex items-center gap-1 font-semibold">
-                        <CheckCircle2 className="w-3 h-3" />
-                        Ready
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* Individual Progress bar for active indexing jobs */}
+                {isProcessing && (
+                  <div className="mt-2.5">
+                    <div className="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden border border-slate-950/40">
+                      <div
+                        className="bg-indigo-500 h-full rounded-full transition-all duration-500"
+                        style={{ width: `${progressPct}%` }}
+                      ></div>
+                    </div>
+                    {job && job.message && (
+                      <div className="mt-1 text-[10px] font-bold text-indigo-400/90 truncate animate-pulse">
+                        {job.message}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => toggleJobExpanded(src.id)}
+                      className="mt-1.5 text-[9px] font-bold text-slate-500 hover:text-slate-350 tracking-wider uppercase flex items-center gap-1 cursor-pointer border-none bg-transparent"
+                    >
+                      {isExpanded
+                        ? "Hide Pipeline Status"
+                        : "View Pipeline Status"}
+                    </button>
+                  </div>
+                )}
+
+                {/* Collapsible Pipeline steps for this specific card */}
+                {isProcessing && isExpanded && job && (
+                  <div className="mt-2.5 space-y-1.5 bg-slate-950 p-2.5 rounded border border-transparent text-[10px] font-mono leading-normal">
+                    {job.steps.map((step) => (
+                      <div
+                        key={step.name}
+                        className="flex items-center justify-between"
+                      >
+                        <span className="capitalize text-slate-500">
+                          {stepLabels[step.name] || step.name.replace(/_/g, " ")}
+                        </span>
+                        <span className="font-bold">
+                          {step.status === "done" && (
+                            <span className="text-emerald-500">✓ Done</span>
+                          )}
+                          {step.status === "failed_fallback_used" && (
+                            <span className="text-amber-500">⚠ Fallback</span>
+                          )}
+                          {step.status === "processing" && (
+                            <span className="text-indigo-400 animate-pulse">
+                              ● Run...
+                            </span>
+                          )}
+                          {step.status === "pending" && (
+                            <span className="text-slate-700">○ Pend</span>
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Stats like entity count if active */}
+                {(src.entity_count !== undefined ||
+                  src.chunk_count !== undefined) && (
+                  <div className="flex gap-3 mt-2.5 pt-2.5 border-t border-slate-900/60 text-[10px] text-slate-400">
+                    {src.entity_count !== undefined && (
+                      <span className="flex items-center gap-1.5 font-bold">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                        {src.entity_count} entities
                       </span>
-                    ) : src.status === "failed" ? (
-                      <span className="text-[10px] text-red-500 flex items-center gap-1 font-semibold">
-                        <XCircle className="w-3 h-3" />
-                        Failed
-                      </span>
-                    ) : (
-                      <span className="text-[10px] text-indigo-400 flex items-center gap-1 font-semibold">
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        Indexing
+                    )}
+                    {src.chunk_count !== undefined && (
+                      <span className="flex items-center gap-1.5 font-bold">
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                        {src.chunk_count} chunks
                       </span>
                     )}
                   </div>
-                </div>
-                <button
-                  onClick={() => onDeleteSource(src.id)}
-                  title="Delete Document"
-                  className="p-1 hover:bg-red-950/40 text-slate-500 hover:text-red-400 rounded transition duration-150 cursor-pointer flex-shrink-0"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                )}
               </div>
-
-              {/* Stats like entity count if active */}
-              {(src.entity_count !== undefined ||
-                src.chunk_count !== undefined) && (
-                <div className="flex gap-3 mt-2.5 pt-2.5 border-t border-slate-900/60 text-[10px] text-slate-400">
-                  {src.entity_count !== undefined && (
-                    <span className="flex items-center gap-1.5 font-bold">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                      {src.entity_count} entities
-                    </span>
-                  )}
-                  {src.chunk_count !== undefined && (
-                    <span className="flex items-center gap-1.5 font-bold">
-                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
-                      {src.chunk_count} chunks
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>

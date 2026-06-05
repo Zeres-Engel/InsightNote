@@ -116,7 +116,7 @@ def format_datetime(dt: Any) -> Optional[str]:
 
 
 router = APIRouter(
-    prefix="/documents",
+    prefix="/api/documents",
 )
 
 # Temporary file prefix
@@ -2562,6 +2562,550 @@ def create_document_routes(
                 )
 
         return BatchInsertResponse(total_files=len(upload_list), results=results)
+
+    @router.post(
+        "/upload/stream",
+        openapi_extra={
+            "requestBody": {
+                "content": {
+                    "multipart/form-data": {
+                        "schema": {
+                            "type": "object",
+                            "required": ["file"],
+                            "properties": {
+                                "file": {
+                                    "type": "string",
+                                    "format": "binary",
+                                    "description": "Choose file to upload",
+                                }
+                            },
+                        }
+                    }
+                }
+            }
+        },
+    )
+    async def upload_file_stream(
+        background_tasks: BackgroundTasks,
+        file: UploadFile = File(
+            ..., description="Upload file", media_type="application/octet-stream"
+        ),
+        multi_modal: bool = Query(
+            default=True,
+            description="If True, routes to the MultiRAG/MinerU pipeline. If False, uses multi-file extraction (pypdf/docx/pptx).",
+        ),
+        graph_mode: bool = Query(
+            default=True,
+            description="If True, runs Knowledge Graph Entity Extraction. If False, pure Vector Search only.",
+        ),
+        workspace: Optional[str] = Query(
+            default=None,
+            description="Isolated workspace/notebook ID. If not provided or 'default', uses default workspace.",
+        ),
+    ):
+        """
+        Upload file streamingly and get real-time pipeline status updates (NDJSON).
+        """
+        import asyncio
+        import json
+        import time
+
+        from fastapi.responses import StreamingResponse
+
+        from app.api.routers.insightnote_routes import (
+            active_jobs_db,
+            ensure_notebook_exists,
+            get_notebook_input_dir,
+            get_rag_instance,
+            notebooks_db,
+        )
+        from app.core.history.chat_history import chat_history_db
+
+        async def upload_progress_generator():
+            # Steps definition for progress
+            step_definitions = [
+                ("load_file", 0.0),
+                ("document_understanding", 2.0),
+                ("workspace_save", 8.0),
+            ]
+
+            # 1. Start upload state: load_file processing
+            init_steps = [
+                {"name": "load_file", "status": "processing"},
+                {"name": "document_understanding", "status": "pending"},
+                {"name": "workspace_save", "status": "pending"},
+            ]
+            # Generate temporary job id
+            job_id = f"job_upload_{generate_track_id('job')[:6]}"
+            yield f"{json.dumps({'job_id': job_id, 'status': 'processing', 'steps': init_steps})}\n"
+
+            # 2. Resolve target RAG instance and input directory
+            target_rag = rag
+            input_dir = doc_manager.input_dir
+            if workspace and workspace != "default":
+                workspace_record = await chat_history_db.get_notebook(workspace)
+                if not workspace_record:
+                    yield f"{json.dumps({'error': f'Workspace {workspace} does not exist in PostgreSQL.'})}\n"
+                    return
+                ensure_notebook_exists(workspace, workspace_record["name"])
+                target_rag = await get_rag_instance(workspace, rag)
+                input_dir = get_notebook_input_dir(workspace)
+
+            # 3. Save file to input dir
+            safe_filename = sanitize_filename(file.filename, input_dir)
+            if not doc_manager.is_supported_file(safe_filename):
+                yield f"{json.dumps({'error': f'Unsupported file type. Supported types: {doc_manager.supported_extensions}'})}\n"
+                return
+
+            if (
+                global_args.max_upload_size is not None
+                and global_args.max_upload_size > 0
+            ):
+                file_size = getattr(file, "size", None)
+                if file_size is not None and file_size > global_args.max_upload_size:
+                    yield f"{json.dumps({'error': f'File too large. Maximum size: {global_args.max_upload_size / 1024 / 1024:.1f}MB'})}\n"
+                    return
+
+            # Check duplicate in db status
+            existing_doc_data = await target_rag.doc_status.get_doc_by_file_path(
+                safe_filename
+            )
+            if existing_doc_data:
+                status = existing_doc_data.get("status", "unknown")
+                existing_track_id = existing_doc_data.get("track_id") or ""
+                done_steps = [
+                    {"name": s[0], "status": "done"} for s in step_definitions
+                ]
+                yield f"{json.dumps({'job_id': existing_track_id or job_id, 'status': 'ready', 'steps': done_steps, 'message': f'File {safe_filename} already exists.'})}\n"
+                return
+
+            file_path = input_dir / safe_filename
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            if file_path.exists():
+                done_steps = [
+                    {"name": s[0], "status": "done"} for s in step_definitions
+                ]
+                yield f"{json.dumps({'job_id': job_id, 'status': 'ready', 'steps': done_steps, 'message': f'File {safe_filename} already exists in input directory.'})}\n"
+                return
+
+            bytes_written = 0
+            chunk_size = 1024 * 1024
+            needs_cleanup = False
+
+            try:
+                async with aiofiles.open(file_path, "wb") as out_file:
+                    while True:
+                        chunk = await file.read(chunk_size)
+                        if not chunk:
+                            break
+                        if (
+                            global_args.max_upload_size is not None
+                            and global_args.max_upload_size > 0
+                        ):
+                            bytes_written += len(chunk)
+                            if bytes_written > global_args.max_upload_size:
+                                needs_cleanup = True
+                                break
+                        await out_file.write(chunk)
+            except Exception as e:
+                yield f"{json.dumps({'error': f'Failed to write file: {str(e)}'})}\n"
+                return
+
+            if needs_cleanup:
+                try:
+                    file_path.unlink()
+                except Exception as cleanup_error:
+                    logger.error(
+                        f"Error cleaning up oversized file {safe_filename}: {cleanup_error}"
+                    )
+                yield f"{json.dumps({'error': f'File too large. Maximum size: {global_args.max_upload_size / 1024 / 1024:.1f}MB'})}\n"
+                return
+
+            # Register job in active_jobs_db (mimics how insightnote_routes registers job)
+            active_jobs_db[job_id] = {
+                "job_id": job_id,
+                "notebook_id": workspace or "default",
+                "filename": safe_filename,
+                "created_at": time.time(),
+                "force_mineru_fallback": False,
+            }
+
+            if workspace and workspace in notebooks_db:
+                notebooks_db[workspace]["status"] = "processing"
+                await chat_history_db.update_notebook_status(
+                    workspace, status="processing"
+                )
+
+            # Enqueue the file for pipeline processing
+            ext = file_path.suffix.lower()
+            mineru_supported_exts = {
+                ".pdf",
+                ".docx",
+                ".doc",
+                ".ppt",
+                ".pptx",
+                ".xls",
+                ".xlsx",
+            }
+
+            if multi_modal and multi_rag is not None and ext in mineru_supported_exts:
+                (
+                    success,
+                    final_track_id,
+                ) = await target_rag.apipeline_enqueue_file_reference(
+                    str(file_path.absolute()),
+                    track_id=job_id,
+                    metadata={"graph_mode": graph_mode, "multi_modal": multi_modal},
+                )
+                if success:
+                    asyncio.create_task(
+                        target_rag.apipeline_process_enqueue_documents()
+                    )
+            else:
+                asyncio.create_task(
+                    pipeline_index_file(
+                        target_rag,
+                        file_path,
+                        job_id,
+                        graph_mode=graph_mode,
+                        multi_modal=multi_modal,
+                    )
+                )
+
+            # Start monitoring the status
+            start_time = time.time()
+            last_graph_node_ids = set()
+            last_graph_link_ids = set()
+            graph_change_initialized = False
+            while True:
+                elapsed = time.time() - start_time
+
+                try:
+                    docs_by_track = await target_rag.aget_docs_by_track_id(job_id)
+                except Exception as e:
+                    logger.error(f"Error checking real track status: {e}")
+                    docs_by_track = {}
+
+                all_done_real = False
+                any_failed_real = False
+                error_msg = ""
+                if docs_by_track:
+
+                    def is_processed(d):
+                        st = getattr(d, "status", None)
+                        if not st:
+                            return False
+                        st_val = getattr(st, "value", st)
+                        return str(st_val).lower() == "processed"
+
+                    def is_failed(d):
+                        st = getattr(d, "status", None)
+                        if not st:
+                            return False
+                        st_val = getattr(st, "value", st)
+                        return str(st_val).lower() == "failed"
+
+                    all_done_real = all(
+                        is_processed(doc) for doc in docs_by_track.values()
+                    )
+                    any_failed_real = any(
+                        is_failed(doc) for doc in docs_by_track.values()
+                    )
+                    if any_failed_real:
+                        for doc in docs_by_track.values():
+                            if is_failed(doc) and getattr(doc, "error_msg", None):
+                                error_msg = doc.error_msg
+                                break
+
+                # 1. Parse real-time logs to extract progress message and percentage
+                progress_msg = "Preparing document workspace..."
+                percent = 5
+
+                import re
+                from pathlib import Path
+
+                log_path = (
+                    Path(__file__).resolve().parent.parent.parent
+                    / "logs"
+                    / "server.log"
+                )
+                if not log_path.exists():
+                    log_path = Path("logs/server.log")
+
+                if log_path.exists():
+                    try:
+                        with open(log_path, "r", encoding="utf-8") as lf:
+                            # Read the last 150 lines
+                            lines = lf.readlines()[-150:]
+
+                        # Scan backwards for latest progress patterns
+                        for line in reversed(lines):
+                            if (
+                                "[MinerU]" in line
+                                or "app.core.document.parser" in line
+                                or "mineru" in line
+                            ):
+                                if "Executing mineru command" in line:
+                                    progress_msg = "Starting multimodal document processing..."
+                                    percent = 15
+                                    break
+                                elif "DocAnalysis init" in line:
+                                    progress_msg = "Preparing document understanding model..."
+                                    percent = 20
+                                    break
+                                elif "Layout Predict" in line:
+                                    match = re.search(r"Layout Predict:\s*(\d+)%", line)
+                                    p = int(match.group(1)) if match else 100
+                                    progress_msg = f"Understanding document layout: {p}%"
+                                    percent = 22 + int(p * 0.08)
+                                    break
+                                elif "MFD Predict" in line:
+                                    match = re.search(r"MFD Predict:\s*(\d+)%", line)
+                                    p = int(match.group(1)) if match else 100
+                                    progress_msg = f"Reading structured content: {p}%"
+                                    percent = 30 + int(p * 0.08)
+                                    break
+                                elif "OCR-det ch" in line:
+                                    match = re.search(r"OCR-det ch:\s*(\d+)%", line)
+                                    p = int(match.group(1)) if match else 100
+                                    progress_msg = f"Locating document text regions: {p}%"
+                                    percent = 38 + int(p * 0.12)
+                                    break
+                                elif "OCR-rec Predict" in line:
+                                    match = re.search(
+                                        r"OCR-rec Predict:\s*(\d+)%", line
+                                    )
+                                    p = int(match.group(1)) if match else 100
+                                    progress_msg = f"Reading text and symbols: {p}%"
+                                    percent = 50 + int(p * 0.15)
+                                    break
+                                elif "Processing pages" in line:
+                                    match = re.search(
+                                        r"Processing pages:\s*(\d+)%", line
+                                    )
+                                    p = int(match.group(1)) if match else 100
+                                    progress_msg = f"Assembling structured pages: {p}%"
+                                    percent = 65 + int(p * 0.1)
+                                    break
+                                elif "Successfully processed" in line:
+                                    progress_msg = (
+                                        "Document understanding complete."
+                                    )
+                                    percent = 75
+                                    break
+
+                            if (
+                                "Completed merging" in line
+                                or "Completed processing file" in line
+                            ):
+                                progress_msg = "Workspace saved successfully."
+                                percent = 100
+                                break
+                            elif "Phase 3:" in line:
+                                progress_msg = "Saving final knowledge structure..."
+                                percent = 95
+                                break
+                            elif "Phase 2: Processing" in line:
+                                match = re.search(
+                                    r"Phase 2:\s*Processing\s*(\d+)\s*relations", line
+                                )
+                                n = match.group(1) if match else ""
+                                progress_msg = (
+                                    f"Saving {n} relationship links..."
+                                    if n
+                                    else "Merging relationships..."
+                                )
+                                percent = 90
+                                break
+                            elif "Phase 1: Processing" in line:
+                                match = re.search(
+                                    r"Phase 1:\s*Processing\s*(\d+)\s*entities", line
+                                )
+                                n = match.group(1) if match else ""
+                                progress_msg = (
+                                    f"Saving {n} discovered entities..."
+                                    if n
+                                    else "Cleaning graph entities..."
+                                )
+                                percent = 85
+                                break
+                            elif (
+                                "Enriched" in line
+                                or "returned enriched content" in line
+                            ):
+                                progress_msg = "Document processing complete. Saving workspace..."
+                                percent = 80
+                                break
+                            elif "Chunk " in line and " extracted " in line:
+                                match = re.search(
+                                    r"Chunk\s+(\d+)\s+of\s+(\d+)\s+extracted\s+(\d+)\s+Ent\s+\+\s+(\d+)\s+Rel",
+                                    line,
+                                )
+                                if match:
+                                    cur, total, ent, rel = match.groups()
+                                    chunk_percent = int(
+                                        (int(cur) / max(int(total), 1)) * 10
+                                    )
+                                    progress_msg = (
+                                        f"Extracted knowledge chunk {cur}/{total}: {ent} entities + {rel} relations"
+                                    )
+                                    percent = 82 + chunk_percent
+                                else:
+                                    progress_msg = "Extracting document knowledge..."
+                                    percent = 84
+                                break
+                    except Exception as log_err:
+                        logger.warning(
+                            f"Error reading server logs for progress tracking: {log_err}"
+                        )
+
+                # Calculate step statuses based on percent
+                steps = []
+                status = "processing"
+
+                phase_thresholds = {
+                    "load_file": 15,
+                    "document_understanding": 80,
+                    "workspace_save": 100,
+                }
+                previous_threshold = 0
+                for step_name, done_threshold in phase_thresholds.items():
+                    if percent >= done_threshold:
+                        step_status = "done"
+                    elif percent >= previous_threshold:
+                        step_status = "processing"
+                    else:
+                        step_status = "pending"
+                    steps.append({"name": step_name, "status": step_status})
+                    previous_threshold = done_threshold
+
+                if docs_by_track:
+                    if all_done_real:
+                        status = "ready"
+                        percent = 100
+                        steps = [
+                            {"name": s[0], "status": "done"} for s in step_definitions
+                        ]
+                        progress_msg = "Workspace saved successfully."
+                        if workspace and workspace in notebooks_db:
+                            notebooks_db[workspace]["status"] = "ready"
+                            notebooks_db[workspace]["source_count"] = len(docs_by_track)
+                            await chat_history_db.update_notebook_status(
+                                workspace,
+                                status="ready",
+                                source_count=len(docs_by_track),
+                            )
+                    elif any_failed_real:
+                        status = "failed"
+                        progress_msg = "Processing failed: " + error_msg
+                        if workspace and workspace in notebooks_db:
+                            notebooks_db[workspace]["status"] = "ready"
+                            await chat_history_db.update_notebook_status(
+                                workspace, status="ready"
+                            )
+                    else:
+                        status = "processing"
+                else:
+                    if percent == 100:
+                        status = "ready"
+                        if workspace and workspace in notebooks_db:
+                            notebooks_db[workspace]["status"] = "ready"
+                            notebooks_db[workspace]["source_count"] = 1
+                            await chat_history_db.update_notebook_status(
+                                workspace, status="ready", source_count=1
+                            )
+
+                yield_payload = {
+                    "job_id": job_id,
+                    "status": status,
+                    "steps": steps,
+                    "message": progress_msg,
+                    "percent": percent,
+                }
+
+                graph_node_ids = set()
+                graph_link_ids = set()
+                try:
+                    graph = getattr(target_rag, "chunk_entity_relation_graph", None)
+                    if graph is not None:
+                        real_nodes = await graph.get_all_nodes()
+                        real_edges = await graph.get_all_edges()
+                        for idx, node in enumerate(real_nodes or []):
+                            graph_node_ids.add(
+                                str(
+                                    node.get("entity_id")
+                                    or node.get("id")
+                                    or node.get("entity_name")
+                                    or f"node_{idx}"
+                                )
+                            )
+                        for idx, edge in enumerate(real_edges or []):
+                            source = edge.get("source") or edge.get("src_id") or ""
+                            target = edge.get("target") or edge.get("tgt_id") or ""
+                            graph_link_ids.add(f"{source}->{target}" or f"edge_{idx}")
+
+                    if not graph_change_initialized:
+                        new_node_ids = []
+                        new_link_ids = []
+                        graph_changed = False
+                        last_graph_node_ids = graph_node_ids
+                        last_graph_link_ids = graph_link_ids
+                        graph_change_initialized = True
+                    else:
+                        new_node_ids = sorted(graph_node_ids - last_graph_node_ids)
+                        new_link_ids = sorted(graph_link_ids - last_graph_link_ids)
+                        graph_changed = (
+                            len(new_node_ids) >= 5
+                            or len(new_link_ids) >= 10
+                            or (
+                                status == "ready"
+                                and bool(new_node_ids or new_link_ids)
+                            )
+                        )
+                    if graph_changed:
+                        last_graph_node_ids = graph_node_ids
+                        last_graph_link_ids = graph_link_ids
+
+                    yield_payload.update(
+                        {
+                            "graph_changed": graph_changed,
+                            "graph_node_count": len(graph_node_ids),
+                            "graph_link_count": len(graph_link_ids),
+                            "new_node_ids": new_node_ids[:25],
+                            "new_link_ids": new_link_ids[:25],
+                        }
+                    )
+                except Exception as graph_err:
+                    logger.debug(f"Graph delta inspection skipped: {graph_err}")
+                    yield_payload.update(
+                        {
+                            "graph_changed": False,
+                            "graph_node_count": 0,
+                            "graph_link_count": 0,
+                            "new_node_ids": [],
+                            "new_link_ids": [],
+                        }
+                    )
+                if error_msg:
+                    yield_payload["error"] = error_msg
+
+                yield f"{json.dumps(yield_payload)}\n"
+
+                if status in ("ready", "failed"):
+                    break
+
+                await asyncio.sleep(1.0)
+
+        return StreamingResponse(
+            upload_progress_generator(),
+            media_type="application/x-ndjson",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Content-Type": "application/x-ndjson",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @router.post(
         "/texts",

@@ -47,10 +47,46 @@ export default function App() {
 
   const [backendOnline, setBackendOnline] = useState(false);
 
-  const [pipelineJob, setPipelineJob] = useState<PipelineJobResponse | null>(
-    null,
-  );
+  const [pipelineJobs, setPipelineJobs] = useState<
+    Record<string, PipelineJobResponse>
+  >({});
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+
+  // Responsive Layout States
+  const [showSources, setShowSources] = useState(true);
+  const [graphWidth, setGraphWidth] = useState(480);
+  const [isResizing, setIsResizing] = useState(false);
+
+  // Drag Resize mouse movement effect
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing) return;
+      const newWidth = window.innerWidth - e.clientX;
+      const maxAllowedWidth = window.innerWidth - (showSources ? 320 : 0);
+
+      if (newWidth < 50) {
+        setGraphWidth(0);
+      } else if (newWidth > maxAllowedWidth - 50) {
+        setGraphWidth(maxAllowedWidth);
+      } else {
+        setGraphWidth(newWidth);
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    if (isResizing) {
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+    }
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizing, showSources]);
 
   // Initial load
   useEffect(() => {
@@ -84,11 +120,55 @@ export default function App() {
     const intervalId = setInterval(async () => {
       try {
         const jobStatus = await api.getPipelineStatus(activeJobId);
-        setPipelineJob(jobStatus);
+
+        // Find the source corresponding to this activeJobId
+        const matchingSrc = sources.find(
+          (s) =>
+            s.id === activeJobId ||
+            s.name.toLowerCase().includes("resume") ||
+            s.id.includes("resume"),
+        );
+        const key = matchingSrc
+          ? matchingSrc.id
+          : activeJobId || "src_resume_pdf";
+        setPipelineJobs((prev) => ({
+          ...prev,
+          [key]: jobStatus,
+        }));
+
+        // Real-time graph node sync:
+        // Trigger graph reload if pipeline has reached entity extraction or neo4j writing
+        const neo4jStep = jobStatus.steps.find((s) => s.name === "neo4j_write");
+        const entityStep = jobStatus.steps.find(
+          (s) => s.name === "entity_extraction",
+        );
+        if (
+          (neo4jStep &&
+            (neo4jStep.status === "done" ||
+              neo4jStep.status === "processing")) ||
+          (entityStep && entityStep.status === "done")
+        ) {
+          try {
+            const updatedGraph = await api.getGraph(activeNotebook.id);
+            // Only update graph state if nodes or links count has actually changed!
+            // This prevents unnecessary bounciness/jitter when there are no new nodes yet.
+            setGraphData((current) => {
+              if (
+                updatedGraph.nodes.length !== current.nodes.length ||
+                updatedGraph.links.length !== current.links.length
+              ) {
+                return updatedGraph;
+              }
+              return current;
+            });
+          } catch (ge) {
+            console.warn("Failed to load real-time graph status", ge);
+          }
+        }
 
         if (jobStatus.status === "ready" || jobStatus.status === "failed") {
           setActiveJobId(null);
-          // Refresh sources & graph
+          // Refresh sources & graph final state
           const updatedSources = await api.listSources(activeNotebook.id);
           setSources(updatedSources);
 
@@ -109,7 +189,7 @@ export default function App() {
     }, 1500);
 
     return () => clearInterval(intervalId);
-  }, [activeJobId, activeNotebook]);
+  }, [activeJobId, activeNotebook, sources]);
 
   // Handler: Select Notebook
   const handleSelectNotebook = (nb: Notebook) => {
@@ -124,7 +204,7 @@ export default function App() {
       setGraphData({ nodes: [], links: [] });
       setMessages([]);
       setHighlightPath({ node_ids: [], link_ids: [] });
-      setPipelineJob(null);
+      setPipelineJobs({});
       setActiveJobId(null);
       return;
     }
@@ -138,19 +218,51 @@ export default function App() {
         const graph = await api.getGraph(activeNotebook.id);
         setGraphData(graph);
 
-        // Load chat history from localStorage
-        const savedHistory = localStorage.getItem(
-          "insightnote.default.chat_history",
-        );
-        if (savedHistory) {
-          try {
+        // Load chat history from PostgreSQL (BE) with local storage fallback
+        try {
+          const pgHistory = await api.getChatHistory(activeNotebook.id);
+          if (pgHistory && pgHistory.length > 0) {
+            const mappedHistory: ChatMessage[] = pgHistory.map(
+              (h: any, idx: number) => ({
+                id: h.id || `msg_pg_${idx}_${Date.now()}`,
+                role: h.role,
+                content: h.content || h.user_prompt || h.answer,
+                timestamp:
+                  h.timestamp ||
+                  new Date().toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  }),
+                citations: h.citations,
+                retrieval_steps: h.retrieval_steps,
+                graph_path: h.graph_path,
+              }),
+            );
+            setMessages(mappedHistory);
+          } else {
+            // Local storage fallback keyed to notebook ID
+            const savedHistory = localStorage.getItem(
+              `insightnote.${activeNotebook.id}.chat_history`,
+            );
+            if (savedHistory) {
+              setMessages(JSON.parse(savedHistory));
+            } else {
+              setMessages([]);
+            }
+          }
+        } catch (err) {
+          console.warn(
+            "Failed to retrieve PostgreSQL chat history, using local storage",
+            err,
+          );
+          const savedHistory = localStorage.getItem(
+            `insightnote.${activeNotebook.id}.chat_history`,
+          );
+          if (savedHistory) {
             setMessages(JSON.parse(savedHistory));
-          } catch (err) {
-            console.error("Error parsing saved chat history", err);
+          } else {
             setMessages([]);
           }
-        } else {
-          setMessages([]);
         }
       } catch (e) {
         console.error(
@@ -165,16 +277,18 @@ export default function App() {
     loadNotebookData();
   }, [activeNotebook]);
 
-  // Persist chat history to localStorage
+  // Persist chat history to localStorage key-isolated
   useEffect(() => {
     if (activeNotebook) {
       if (messages.length > 0) {
         localStorage.setItem(
-          "insightnote.default.chat_history",
+          `insightnote.${activeNotebook.id}.chat_history`,
           JSON.stringify(messages),
         );
       } else {
-        localStorage.removeItem("insightnote.default.chat_history");
+        localStorage.removeItem(
+          `insightnote.${activeNotebook.id}.chat_history`,
+        );
       }
     }
   }, [messages, activeNotebook]);
@@ -182,12 +296,28 @@ export default function App() {
   // Handler: Create Notebook
   const handleCreateNotebook = async (name: string) => {
     if (!name.trim()) return;
+    const tempId = `notebook_temp_${Date.now()}`;
+    const tempNb: Notebook = {
+      id: tempId,
+      name: name.trim(),
+      source_count: 0,
+      status: "empty",
+    };
+
+    // Optimistically add the temporary notebook to state and open it instantly
+    setNotebooks((prev) => [...prev, tempNb]);
+    setActiveNotebook(tempNb);
+
     try {
       const newNb = await api.createNotebook(name.trim());
-      setNotebooks((prev) => [...prev, newNb]);
-      setActiveNotebook(newNb); // Auto-open after creating
+      // Replace tempNb with the real newNb once backend resolves
+      setNotebooks((prev) => prev.map((nb) => (nb.id === tempId ? newNb : nb)));
+      setActiveNotebook(newNb);
     } catch (e) {
-      console.error("Failed to create notebook", e);
+      console.error("Failed to create notebook, reverting", e);
+      // Revert state on failure
+      setNotebooks((prev) => prev.filter((nb) => nb.id !== tempId));
+      setActiveNotebook(null);
     }
   };
 
@@ -242,7 +372,10 @@ export default function App() {
         const initJobStatus = await api.getPipelineStatus(
           response.pipeline_job_id,
         );
-        setPipelineJob(initJobStatus);
+        setPipelineJobs((prev) => ({
+          ...prev,
+          [response.source_id]: initJobStatus,
+        }));
       }
     } catch (e) {
       console.error("Failed to load example source", e);
@@ -252,27 +385,94 @@ export default function App() {
   // Handler: Upload File source
   const handleUploadFile = async (file: File) => {
     if (!activeNotebook) return;
+    const tempSourceId = `src_temp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     try {
-      const response = await api.uploadFile(activeNotebook.id, file);
       const pendingSource: SourceListItem = {
-        id: response.source_id,
-        name: response.name,
-        type: response.type,
-        status: response.status,
+        id: tempSourceId,
+        name: file.name,
+        type: file.name.endsWith(".pdf") ? "pdf" : "text",
+        status: "processing",
         entity_count: 0,
         chunk_count: 0,
       };
       setSources((prev) => [pendingSource, ...prev]);
 
-      if (response.pipeline_job_id) {
-        setActiveJobId(response.pipeline_job_id);
-        const initJobStatus = await api.getPipelineStatus(
-          response.pipeline_job_id,
-        );
-        setPipelineJob(initJobStatus);
-      }
+      const response = await api.uploadFileStream(
+        activeNotebook.id,
+        file,
+        (progress) => {
+          // Update the progress in pipelineJobs map keyed by tempSourceId
+          setPipelineJobs((prev) => ({
+            ...prev,
+            [tempSourceId]: progress,
+          }));
+
+          if (progress.graph_changed || progress.new_node_ids?.length) {
+            void api.getGraph(activeNotebook.id).then((updatedGraph) => {
+              setGraphData((current) => {
+                if (
+                  updatedGraph.nodes.length !== current.nodes.length ||
+                  updatedGraph.links.length !== current.links.length
+                ) {
+                  return updatedGraph;
+                }
+                return current;
+              });
+              if (progress.new_node_ids?.length) {
+                setHighlightPath({
+                  node_ids: progress.new_node_ids,
+                  link_ids: progress.new_link_ids || [],
+                });
+              }
+            });
+          }
+        },
+      );
+
+      // Replace temporary source with enqueued source
+      setSources((prev) =>
+        prev.map((src) =>
+          src.id === tempSourceId
+            ? { ...src, id: response.source_id, status: response.status }
+            : src,
+        ),
+      );
+
+      // Transfer progress mapping from tempSourceId to the real source_id
+      setPipelineJobs((prev) => {
+        const next = { ...prev };
+        if (next[tempSourceId]) {
+          next[response.source_id] = next[tempSourceId];
+          delete next[tempSourceId];
+        }
+        return next;
+      });
+
+      // Once upload stream finishes, trigger final sync
+      const updatedSources = await api.listSources(activeNotebook.id);
+      setSources(updatedSources);
+
+      const updatedGraph = await api.getGraph(activeNotebook.id);
+      setGraphData(updatedGraph);
+
+      const updatedNb = await api.getNotebook(activeNotebook.id);
+      setActiveNotebook(updatedNb);
+
+      const list = await api.listNotebooks();
+      setNotebooks(list);
+
+      // Clear the job progress state after 3 seconds
+      setTimeout(() => {
+        setPipelineJobs((prev) => {
+          const next = { ...prev };
+          delete next[response.source_id];
+          return next;
+        });
+      }, 3000);
     } catch (e) {
       console.error("Failed to upload file source", e);
+      // Remove pending source in case of failure
+      setSources((prev) => prev.filter((s) => s.id !== tempSourceId));
     }
   };
 
@@ -293,6 +493,23 @@ export default function App() {
     setMessages((prev) => [...prev, userMsg]);
     setChatLoading(true);
 
+    // Create an empty assistant message first
+    const assistantMsgId = `msg_assistant_${Date.now()}`;
+    const initialAssistantMsg: ChatMessage = {
+      id: assistantMsgId,
+      role: "assistant",
+      content: "",
+      timestamp: new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+      citations: [],
+      retrieval_steps: [],
+      graph_path: { node_ids: [], link_ids: [] },
+    };
+
+    setMessages((prev) => [...prev, initialAssistantMsg]);
+
     try {
       // Create chat history payload containing prior conversation + current query
       const chatHistory = [
@@ -300,24 +517,65 @@ export default function App() {
         { role: "user", content: text },
       ];
 
-      // 2. Call backend/mock response with history
-      const response = await api.askChat(activeNotebook.id, text, chatHistory);
+      // 2. Call backend/mock response with history and streaming callbacks
+      const response = await api.askChat(
+        activeNotebook.id,
+        text,
+        chatHistory,
+        // onChunk callback
+        (chunk) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMsgId
+                ? { ...m, content: m.content + chunk }
+                : m,
+            ),
+          );
+        },
+        // onMetadata callback
+        (meta) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMsgId
+                ? {
+                    ...m,
+                    citations: meta.citations || [],
+                    retrieval_steps: meta.retrieval_steps || [],
+                    graph_path: meta.graph_path || {
+                      node_ids: [],
+                      link_ids: [],
+                    },
+                    suggested_questions: meta.suggested_questions || [],
+                  }
+                : m,
+            ),
+          );
+          // Highlight path in 3D Graph (if path exists)
+          if (
+            meta.graph_path &&
+            meta.graph_path.node_ids &&
+            meta.graph_path.node_ids.length > 0
+          ) {
+            setHighlightPath(meta.graph_path);
+          }
+        },
+      );
 
-      // 3. Create Assistant Message
-      const assistantMsg: ChatMessage = {
-        id: `msg_assistant_${Date.now()}`,
-        role: "assistant",
-        content: response.answer,
-        timestamp: new Date().toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-        citations: response.citations,
-        retrieval_steps: response.retrieval_steps,
-        graph_path: response.graph_path,
-      };
-
-      setMessages((prev) => [...prev, assistantMsg]);
+      // Finally, set the final complete object just to be fully consistent
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMsgId
+            ? {
+                ...m,
+                content: response.answer,
+                citations: response.citations,
+                retrieval_steps: response.retrieval_steps,
+                graph_path: response.graph_path,
+                suggested_questions: response.suggested_questions,
+              }
+            : m,
+        ),
+      );
 
       // 4. Highlight path in 3D Graph (if path exists)
       if (response.graph_path && response.graph_path.node_ids.length > 0) {
@@ -343,18 +601,36 @@ export default function App() {
   // Handler: Delete Ingested Source Document
   const handleDeleteSource = async (sourceId: string) => {
     if (!activeNotebook) return;
+
+    // Save current states for potential revert on failure
+    const previousSources = [...sources];
+    const previousGraphData = { ...graphData };
+    const previousNotebooks = [...notebooks];
+    const previousActiveNotebook = { ...activeNotebook };
+
+    // Optimistically update states instantly
+    setSources((prev) => prev.filter((src) => src.id !== sourceId));
+    setHighlightPath({ node_ids: [], link_ids: [] });
+    setActiveNotebook((prev) =>
+      prev
+        ? { ...prev, source_count: Math.max(0, prev.source_count - 1) }
+        : null,
+    );
+    setNotebooks((prev) =>
+      prev.map((n) =>
+        n.id === activeNotebook.id
+          ? { ...n, source_count: Math.max(0, n.source_count - 1) }
+          : n,
+      ),
+    );
+
     try {
       await api.deleteSource(activeNotebook.id, sourceId);
-      setSources((prev) => prev.filter((src) => src.id !== sourceId));
 
-      // Reload graph data after deleting a source
+      // Fetch actual background sync
       const updatedGraph = await api.getGraph(activeNotebook.id);
       setGraphData(updatedGraph);
 
-      // Clear highlighted path
-      setHighlightPath({ node_ids: [], link_ids: [] });
-
-      // Update notebooks list and active notebook source count
       const list = await api.listNotebooks();
       setNotebooks(list);
       const updatedNb = list.find((n) => n.id === activeNotebook.id);
@@ -362,21 +638,43 @@ export default function App() {
         setActiveNotebook(updatedNb);
       }
     } catch (e) {
-      console.error("Failed to delete source", e);
+      console.error("Failed to delete source, reverting", e);
+      // Revert all states on failure
+      setSources(previousSources);
+      setGraphData(previousGraphData);
+      setNotebooks(previousNotebooks);
+      setActiveNotebook(previousActiveNotebook);
     }
   };
 
   // Handler: Delete Notebook
   const handleDeleteNotebook = async (notebookId: string) => {
+    // Save current states for potential revert on failure
+    const previousNotebooks = [...notebooks];
+    const previousActiveNotebook = activeNotebook;
+
+    // Optimistically update states instantly
+    setNotebooks((prev) => prev.filter((nb) => nb.id !== notebookId));
+    if (activeNotebook && activeNotebook.id === notebookId) {
+      setActiveNotebook(null);
+    }
+
     try {
       await api.deleteNotebook(notebookId);
-      setNotebooks((prev) => prev.filter((nb) => nb.id !== notebookId));
-      if (activeNotebook && activeNotebook.id === notebookId) {
-        setActiveNotebook(null);
-      }
     } catch (e) {
-      console.error("Failed to delete notebook", e);
+      console.error("Failed to delete notebook, reverting", e);
+      // Revert states on failure
+      setNotebooks(previousNotebooks);
+      if (previousActiveNotebook && previousActiveNotebook.id === notebookId) {
+        setActiveNotebook(previousActiveNotebook);
+      }
     }
+  };
+
+  // Handler: start resizing graph panel
+  const startResizing = (mouseDownEvent: React.MouseEvent) => {
+    mouseDownEvent.preventDefault();
+    setIsResizing(true);
   };
 
   // --- RENDER DASHBOARD VIEW ---
@@ -632,25 +930,39 @@ export default function App() {
       </div>
 
       {/* 3-Column Responsive Workspace Layout */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[320px_minmax(520px,1fr)_480px] h-full overflow-hidden">
+      <div className="flex-1 flex h-full overflow-hidden relative">
         {/* Left Panel: Sources */}
-        <div className="h-full overflow-hidden border-slate-900 lg:border-r">
-          <SourcesPanel
-            notebook={activeNotebook}
-            sources={sources}
-            loading={sourcesLoading}
-            pipelineJob={pipelineJob}
-            onAddUrl={handleAddUrl}
-            onAddText={handleAddText}
-            onUploadFile={handleUploadFile}
-            onLoadExample={handleLoadExample}
-            onDeleteSource={handleDeleteSource}
-            onBackToDashboard={() => setActiveNotebook(null)}
-          />
-        </div>
+        {showSources && (
+          <div className="w-[320px] h-full overflow-hidden border-slate-900 border-r flex-shrink-0 animate-fade-in">
+            <SourcesPanel
+              notebook={activeNotebook}
+              sources={sources}
+              loading={sourcesLoading}
+              pipelineJobs={pipelineJobs}
+              onAddUrl={handleAddUrl}
+              onAddText={handleAddText}
+              onUploadFile={handleUploadFile}
+              onLoadExample={handleLoadExample}
+              onDeleteSource={handleDeleteSource}
+              onBackToDashboard={() => setActiveNotebook(null)}
+            />
+          </div>
+        )}
 
         {/* Middle Panel: AI Copilot Chat */}
-        <div className="h-full overflow-hidden flex flex-col">
+        <div
+          style={{
+            width:
+              graphWidth >= window.innerWidth - (showSources ? 320 : 0)
+                ? 0
+                : "auto",
+            display:
+              graphWidth >= window.innerWidth - (showSources ? 320 : 0)
+                ? "none"
+                : "flex",
+          }}
+          className="flex-1 h-full overflow-hidden flex flex-col"
+        >
           <ChatPanel
             messages={messages}
             isLoading={chatLoading}
@@ -659,11 +971,26 @@ export default function App() {
               activeNotebook.id.includes("resume") ||
               activeNotebook.name.toLowerCase().includes("resume")
             }
+            showSources={showSources}
+            onToggleSources={() => setShowSources(!showSources)}
           />
         </div>
 
+        {/* Resize Handle Divider */}
+        <div
+          onMouseDown={startResizing}
+          className={`w-1 h-full cursor-col-resize hover:bg-indigo-500/50 transition-colors duration-150 relative z-10 flex-shrink-0 ${
+            isResizing ? "bg-indigo-500" : "bg-slate-900"
+          }`}
+        >
+          <div className="absolute inset-y-0 left-[1px] w-[2px] bg-slate-850/40 pointer-events-none" />
+        </div>
+
         {/* Right Panel: WebGL 3D Graph */}
-        <div className="h-full overflow-hidden border-slate-900 lg:border-l">
+        <div
+          style={{ width: graphWidth }}
+          className="h-full overflow-hidden border-slate-900 border-l flex-shrink-0"
+        >
           <KnowledgeGraphPanel
             graphData={graphData}
             highlightPath={highlightPath}

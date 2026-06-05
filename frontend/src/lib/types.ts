@@ -30,6 +30,9 @@ export interface ChatResponse {
   citations: CitationItem[];
   retrieval_steps: string[];
   graph_path: GraphPath;
+  nodes_metadata?: any[];
+  links_metadata?: any[];
+  suggested_questions?: string[];
 }
 
 export interface GraphNode {
@@ -65,12 +68,13 @@ export interface NodeDetailsResponse {
 
 export interface ChatMessage {
   id: string;
-  role: 'user' | 'assistant';
+  role: "user" | "assistant";
   content: string;
   timestamp: string;
   citations?: CitationItem[];
   retrieval_steps?: string[];
   graph_path?: GraphPath;
+  suggested_questions?: string[];
 }
 
 export interface Notebook {
@@ -82,13 +86,20 @@ export interface Notebook {
 
 export interface PipelineStep {
   name: string;
-  status: 'pending' | 'processing' | 'done' | 'failed_fallback_used';
+  status: "pending" | "processing" | "done" | "failed_fallback_used";
 }
 
 export interface PipelineJobResponse {
   job_id: string;
-  status: 'processing' | 'ready' | 'failed';
+  status: "processing" | "ready" | "failed";
   steps: PipelineStep[];
+  message?: string;
+  percent?: number;
+  graph_changed?: boolean;
+  graph_node_count?: number;
+  graph_link_count?: number;
+  new_node_ids?: string[];
+  new_link_ids?: string[];
 }
 
 export interface SourceAddResponse {
@@ -98,4 +109,3 @@ export interface SourceAddResponse {
   status: string;
   pipeline_job_id?: string;
 }
-

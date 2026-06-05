@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import ForceGraph3D from "react-force-graph-3d";
+import * as THREE from "three";
 import {
   Maximize2,
   Search,
@@ -52,7 +53,7 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
       }
     }, 1500);
     return () => clearTimeout(timer);
-  }, [graphData]);
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -66,6 +67,11 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
     return () => observer.disconnect();
   }, []);
 
+  const [newlyIngestedNodeIds, setNewlyIngestedNodeIds] = useState<string[]>(
+    [],
+  );
+  const prevNodeIdsRef = useRef<string[]>([]);
+
   // Group node colors
   const groupColors: Record<string, string> = {
     document: "#10b981", // emerald
@@ -74,7 +80,41 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
     process: "#eab308", // yellow
     rule: "#ef4444", // red
     person: "#ec4899", // pink
+    organization: "#22d3ee",
+    location: "#f9a8d4",
+    artifact: "#f5deb3",
+    content: "#38bdf8",
+    data: "#facc15",
+    notebook: "#c4b5fd",
+    event: "#bae6fd",
+    method: "#c084fc",
   };
+  const brightFallbackColors = [
+    "#fca5a5",
+    "#fdba74",
+    "#fde047",
+    "#86efac",
+    "#67e8f9",
+    "#93c5fd",
+    "#c4b5fd",
+    "#f0abfc",
+  ];
+  const colorForGroup = (group: string) => {
+    if (groupColors[group]) return groupColors[group];
+    const index =
+      [...group].reduce((sum, char) => sum + char.charCodeAt(0), 0) %
+      brightFallbackColors.length;
+    return brightFallbackColors[index];
+  };
+
+  const nodeGroupStats = useMemo(() => {
+    const counts = new Map<string, number>();
+    graphData.nodes.forEach((node) => {
+      const group = (node.group || node.type || "concept").toLowerCase();
+      counts.set(group, (counts.get(group) || 0) + 1);
+    });
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+  }, [graphData.nodes]);
 
   // Node Click handler
   const handleNodeClick = async (node: any) => {
@@ -82,6 +122,9 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
     try {
       const details = await onNodeClick(node.id);
       setSelectedNode(details);
+
+      // Synchronize to the search bar
+      setSearchQuery(node.label || node.id);
 
       // Auto-focus camera on clicked node
       if (fgRef.current && node.x !== undefined) {
@@ -118,12 +161,24 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
   // Adjust nodes/links for the render engine based on highlighting path
   const processedData = useMemo(() => {
     const hasActiveHighlight = highlightPath.node_ids.length > 0;
+    const activeNodeIds = new Set(highlightPath.node_ids);
+    const activeLinkIds = new Set(highlightPath.link_ids);
+    const selectedNodeId = selectedNode?.id;
+    const search = searchQuery.trim().toLowerCase();
 
     const nodes = graphData.nodes.map((node) => {
-      const isHighlighted = highlightPath.node_ids.includes(node.id);
+      const isReasoningHighlighted = activeNodeIds.has(node.id);
+      const isSelected = selectedNodeId === node.id;
+      const isSearchMatched =
+        !!search &&
+        ((node.label || "").toLowerCase().includes(search) ||
+          (node.type || "").toLowerCase().includes(search));
+      const isHighlighted =
+        isReasoningHighlighted || isSelected || isSearchMatched;
 
       // Compute color
-      let color = groupColors[node.group] || "#94a3b8";
+      const group = (node.group || node.type || "concept").toLowerCase();
+      let color = colorForGroup(group);
       let val = 1.5; // default size value
 
       if (hasActiveHighlight) {
@@ -150,7 +205,9 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
         typeof link.source === "object" ? (link.source as any).id : link.source;
       const targetId =
         typeof link.target === "object" ? (link.target as any).id : link.target;
-      const isHighlighted = highlightPath.link_ids.includes(link.id);
+      const isHighlighted =
+        activeLinkIds.has(link.id) ||
+        (activeNodeIds.has(String(sourceId)) && activeNodeIds.has(String(targetId)));
 
       let color = "#475569"; // default slate-600
       let width = 1.0;
@@ -173,7 +230,65 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
     });
 
     return { nodes, links };
-  }, [graphData, highlightPath]);
+  }, [graphData, highlightPath, searchQuery, selectedNode]);
+
+  // Automatically track newly added nodes on ingestion and pan/glow them
+  useEffect(() => {
+    if (!graphData || !graphData.nodes || graphData.nodes.length === 0) return;
+
+    const currentNodeIds = graphData.nodes.map((n: any) => n.id);
+    const prevNodeIds = prevNodeIdsRef.current;
+
+    if (prevNodeIds.length > 0) {
+      const addedNodeIds = currentNodeIds.filter(
+        (id) => !prevNodeIds.includes(id),
+      );
+
+      if (addedNodeIds.length > 0) {
+        prevNodeIdsRef.current = currentNodeIds;
+        setNewlyIngestedNodeIds(addedNodeIds);
+
+        // Auto-focus camera on the center of newly added nodes after short render delay
+        setTimeout(() => {
+          if (!fgRef.current) return;
+          const newlyAddedNodes = processedData.nodes.filter((n: any) =>
+            addedNodeIds.includes(n.id),
+          );
+
+          if (newlyAddedNodes.length > 0) {
+            let sumX = 0,
+              sumY = 0,
+              sumZ = 0;
+            newlyAddedNodes.forEach((n: any) => {
+              sumX += n.x || 0;
+              sumY += n.y || 0;
+              sumZ += n.z || 0;
+            });
+            const avgX = sumX / newlyAddedNodes.length;
+            const avgY = sumY / newlyAddedNodes.length;
+            const avgZ = sumZ / newlyAddedNodes.length;
+
+            if (addedNodeIds.length <= 12) {
+              fgRef.current.cameraPosition(
+                { x: avgX, y: avgY, z: avgZ + 120 },
+                { x: avgX, y: avgY, z: avgZ },
+                1400,
+              );
+            }
+          }
+        }, 800);
+
+        // Fades out glowing aura after 8 seconds
+        const timeoutId = setTimeout(() => {
+          setNewlyIngestedNodeIds([]);
+        }, 8000);
+
+        return () => clearTimeout(timeoutId);
+      }
+    }
+
+    prevNodeIdsRef.current = currentNodeIds;
+  }, [graphData.nodes, processedData.nodes]);
 
   // Handle Search submit
   const handleSearchSubmit = (e: React.FormEvent) => {
@@ -236,6 +351,9 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
         );
 
         if (renderedNodes.length > 0) {
+          // Sync search box to first node in highlighted path
+          setSearchQuery(renderedNodes[0].label || renderedNodes[0].id);
+
           // Compute bounding box or average center
           let sumX = 0,
             sumY = 0,
@@ -305,6 +423,59 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
           `}
           nodeColor={(node: any) => node.color}
           nodeVal={(node: any) => node.val}
+          nodeThreeObjectExtend={true}
+          nodeThreeObject={(node: any) => {
+            const isReasoningHighlight = highlightPath.node_ids.includes(
+              node.id,
+            );
+            const isSelectedHighlight =
+              selectedNode && selectedNode.id === node.id;
+            const isIngestedHighlight = newlyIngestedNodeIds.includes(node.id);
+            const isSearchHighlight =
+              !!searchQuery.trim() &&
+              ((node.label || "")
+                .toLowerCase()
+                .includes(searchQuery.trim().toLowerCase()) ||
+                (node.type || "")
+                  .toLowerCase()
+                  .includes(searchQuery.trim().toLowerCase()));
+
+            if (
+              isReasoningHighlight ||
+              isSelectedHighlight ||
+              isIngestedHighlight ||
+              isSearchHighlight
+            ) {
+              // Choose color and sizing based on highlight type
+              let glowColor = "#a855f7"; // purple for manual selection
+              let scaleSize = 2.0;
+
+              if (isReasoningHighlight) {
+                glowColor = "#fbbf24"; // vibrant gold/amber for reasoning paths
+                scaleSize = 2.2;
+              } else if (isIngestedHighlight) {
+                glowColor = "#10b981"; // emerald green for newly ingested nodes
+                scaleSize = 2.1;
+              } else if (isSearchHighlight) {
+                glowColor = "#38bdf8"; // cyan for local search focus
+                scaleSize = 1.9;
+              }
+
+              // Create a semi-transparent glowing halo sphere using AdditiveBlending
+              const size = (node.val || 4) * scaleSize;
+              const geometry = new THREE.SphereGeometry(size, 16, 16);
+              const material = new THREE.MeshBasicMaterial({
+                color: new THREE.Color(glowColor),
+                transparent: true,
+                opacity: 0.25,
+                blending: THREE.AdditiveBlending,
+                side: THREE.DoubleSide,
+              });
+
+              return new THREE.Mesh(geometry, material);
+            }
+            return new THREE.Object3D();
+          }}
           onNodeClick={handleNodeClick}
           onNodeDragEnd={(node: any) => {
             // keep coords on drag end
@@ -325,11 +496,9 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
           linkDirectionalArrowColor={(link: any) => link.color}
           linkDirectionalArrowRelPos={1.0}
           // Highlighting particles! pulsing directional dots moving on paths
-          linkDirectionalParticles={(link: any) =>
-            highlightPath.link_ids.includes(link.id) ? 5 : 0
-          }
+          linkDirectionalParticles={(link: any) => (link.width > 1.5 ? 5 : 0)}
           linkDirectionalParticleWidth={(link: any) =>
-            highlightPath.link_ids.includes(link.id) ? 3.0 : 0
+            link.width > 1.5 ? 3.0 : 0
           }
           linkDirectionalParticleSpeed={(link: any) => 0.015}
           linkDirectionalParticleColor={() => "#fbbf24"} // Gold light pulses
@@ -417,13 +586,15 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
             Node Legend
           </div>
           <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] text-slate-400 font-semibold">
-            {Object.entries(groupColors).map(([group, color]) => (
+            {nodeGroupStats.map(([group, count]) => (
               <div key={group} className="flex items-center gap-1.5">
                 <span
                   className="w-2 h-2 rounded-full flex-shrink-0"
-                  style={{ backgroundColor: color }}
+                  style={{ backgroundColor: colorForGroup(group) }}
                 />
-                <span className="capitalize truncate">{group}</span>
+                <span className="capitalize truncate">
+                  {group} ({count})
+                </span>
               </div>
             ))}
           </div>

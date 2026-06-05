@@ -1,46 +1,46 @@
 from __future__ import annotations
-import weakref
-
-import sys
 
 import asyncio
-import html
 import csv
+import html
 import inspect
 import json
 import logging
 import logging.handlers
 import os
 import re
+import sys
 import time
 import uuid
+import weakref
 from dataclasses import dataclass
 from datetime import datetime
 from functools import wraps
 from hashlib import md5
 from typing import (
-    Any,
-    Protocol,
-    Callable,
     TYPE_CHECKING,
+    Any,
+    Callable,
+    Collection,
+    Iterable,
     List,
     Optional,
-    Iterable,
+    Protocol,
     Sequence,
-    Collection,
 )
+
 import numpy as np
 from dotenv import load_dotenv
 
 from app.core.constants import (
-    DEFAULT_LOG_MAX_BYTES,
     DEFAULT_LOG_BACKUP_COUNT,
     DEFAULT_LOG_FILENAME,
-    GRAPH_FIELD_SEP,
+    DEFAULT_LOG_MAX_BYTES,
     DEFAULT_MAX_TOTAL_TOKENS,
     DEFAULT_SOURCE_IDS_LIMIT_METHOD,
-    VALID_SOURCE_IDS_LIMIT_METHODS,
+    GRAPH_FIELD_SEP,
     SOURCE_IDS_LIMIT_METHOD_FIFO,
+    VALID_SOURCE_IDS_LIMIT_METHODS,
 )
 
 # Precompile regex pattern for JSON sanitization (module-level, compiled once)
@@ -280,11 +280,11 @@ class ZeragPathFilter(logging.Filter):
         super().__init__()
         # Define paths to be filtered
         self.filtered_paths = [
-            "/documents",
-            "/documents/paginated",
+            "/api/documents",
+            "/api/documents/paginated",
             "/health",
             "/webui/",
-            "/documents/pipeline_status",
+            "/api/documents/pipeline_status",
         ]
         # self.filtered_paths = ["/health", "/webui/"]
 
@@ -2721,6 +2721,9 @@ async def process_chunks_unified(
     Returns:
         Processed and filtered list of text chunks
     """
+    # Force disable reranking temporarily to avoid Cohere/BGE 429 rate limit errors
+    query_param.enable_rerank = False
+
     if not unique_chunks:
         return []
 

@@ -27,5 +27,6 @@ json-repair
 mineru[core]
 PyJWT
 python-multipart
+asyncpg
 # Optional: textract for unified extraction (TXT, DOCX, PPTX, CSV, PDF)
 # pip install textract  # requires system deps: poppler, tesseract, etc.

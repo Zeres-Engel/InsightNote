@@ -1,73 +1,74 @@
 from __future__ import annotations
-from functools import partial
-from pathlib import Path
 
 import asyncio
 import json
-import json_repair
-from typing import Any, AsyncIterator, overload, Literal
+import time
 from collections import Counter, defaultdict
+from functools import partial
+from pathlib import Path
+from typing import Any, AsyncIterator, Literal, overload
 
-from app.core.exceptions import (
-    PipelineCancelledException,
-    ChunkTokenLimitExceededError,
-)
-from app.core.utils import (
-    logger,
-    compute_mdhash_id,
-    Tokenizer,
-    is_float_regex,
-    sanitize_and_normalize_extracted_text,
-    pack_user_ass_to_openai_messages,
-    split_string_by_multi_markers,
-    truncate_list_by_token_size,
-    compute_args_hash,
-    handle_cache,
-    save_to_cache,
-    CacheData,
-    use_llm_func_with_cache,
-    update_chunk_cache_list,
-    remove_think_tags,
-    pick_by_weighted_polling,
-    pick_by_vector_similarity,
-    process_chunks_unified,
-    safe_vdb_operation_with_exception,
-    create_prefixed_exception,
-    fix_tuple_delimiter_corruption,
-    convert_to_user_format,
-    generate_reference_list_from_chunks,
-    apply_source_ids_limit,
-    merge_source_ids,
-    make_relation_chunk_key,
-)
+import json_repair
+from dotenv import load_dotenv
+
 from app.core.base import (
     BaseGraphStorage,
     BaseKVStorage,
     BaseVectorStorage,
-    TextChunkSchema,
+    QueryContextResult,
     QueryParam,
     QueryResult,
-    QueryContextResult,
+    TextChunkSchema,
 )
-from app.core.prompt import PROMPTS
 from app.core.constants import (
-    GRAPH_FIELD_SEP,
+    DEFAULT_ENTITY_NAME_MAX_LENGTH,
+    DEFAULT_ENTITY_TYPES,
+    DEFAULT_FILE_PATH_MORE_PLACEHOLDER,
+    DEFAULT_KG_CHUNK_PICK_METHOD,
     DEFAULT_MAX_ENTITY_TOKENS,
+    DEFAULT_MAX_FILE_PATHS,
     DEFAULT_MAX_RELATION_TOKENS,
     DEFAULT_MAX_TOTAL_TOKENS,
     DEFAULT_RELATED_CHUNK_NUMBER,
-    DEFAULT_KG_CHUNK_PICK_METHOD,
-    DEFAULT_ENTITY_TYPES,
     DEFAULT_SUMMARY_LANGUAGE,
-    SOURCE_IDS_LIMIT_METHOD_KEEP,
+    GRAPH_FIELD_SEP,
     SOURCE_IDS_LIMIT_METHOD_FIFO,
-    DEFAULT_FILE_PATH_MORE_PLACEHOLDER,
-    DEFAULT_MAX_FILE_PATHS,
-    DEFAULT_ENTITY_NAME_MAX_LENGTH,
+    SOURCE_IDS_LIMIT_METHOD_KEEP,
+)
+from app.core.exceptions import (
+    ChunkTokenLimitExceededError,
+    PipelineCancelledException,
 )
 from app.core.kg.shared_storage import get_storage_keyed_lock
-import time
-from dotenv import load_dotenv
+from app.core.prompt import PROMPTS
+from app.core.utils import (
+    CacheData,
+    Tokenizer,
+    apply_source_ids_limit,
+    compute_args_hash,
+    compute_mdhash_id,
+    convert_to_user_format,
+    create_prefixed_exception,
+    fix_tuple_delimiter_corruption,
+    generate_reference_list_from_chunks,
+    handle_cache,
+    is_float_regex,
+    logger,
+    make_relation_chunk_key,
+    merge_source_ids,
+    pack_user_ass_to_openai_messages,
+    pick_by_vector_similarity,
+    pick_by_weighted_polling,
+    process_chunks_unified,
+    remove_think_tags,
+    safe_vdb_operation_with_exception,
+    sanitize_and_normalize_extracted_text,
+    save_to_cache,
+    split_string_by_multi_markers,
+    truncate_list_by_token_size,
+    update_chunk_cache_list,
+    use_llm_func_with_cache,
+)
 
 # use the .env that is inside the current folder
 # allows to use different .env file for each zerag instance
@@ -2485,7 +2486,11 @@ async def merge_nodes_and_edges(
     """
 
     if pipeline_status is None:
-        pipeline_status = {"latest_message": "", "history_messages": [], "cancellation_requested": False}
+        pipeline_status = {
+            "latest_message": "",
+            "history_messages": [],
+            "cancellation_requested": False,
+        }
     if pipeline_status_lock is None:
         pipeline_status_lock = asyncio.Lock()
 
@@ -3462,10 +3467,17 @@ async def _get_vector_context(
     try:
         # Use chunk_top_k if specified, otherwise fall back to top_k
         search_top_k = query_param.chunk_top_k or query_param.top_k
-        vector_score = query_param.vector_score if query_param.vector_score is not None else chunks_vdb.global_config.get("VECTOR_SCORE", 0.2)
+        vector_score = (
+            query_param.vector_score
+            if query_param.vector_score is not None
+            else chunks_vdb.global_config.get("VECTOR_SCORE", 0.2)
+        )
 
         results = await chunks_vdb.query(
-            query, top_k=search_top_k, score_threshold=vector_score, query_embedding=query_embedding
+            query,
+            top_k=search_top_k,
+            score_threshold=vector_score,
+            query_embedding=query_embedding,
         )
         if not results:
             logger.info(
@@ -3482,7 +3494,9 @@ async def _get_vector_context(
                     "file_path": result.get("file_path", "unknown_source"),
                     "source_type": "vector",  # Mark the source type
                     "chunk_id": result.get("id"),  # Add chunk_id for deduplication
-                    "metadata": result.get("metadata", {}),  # Preserve bbox, page_idx, etc.
+                    "metadata": result.get(
+                        "metadata", {}
+                    ),  # Preserve bbox, page_idx, etc.
                 }
                 valid_chunks.append(chunk_with_metadata)
 
@@ -4093,11 +4107,13 @@ async def _build_context_str(
             }
         )
 
+    import os
+
     text_units_str = "\n".join(
         json.dumps(text_unit, ensure_ascii=False) for text_unit in chunks_context
     )
     reference_list_str = "\n".join(
-        f"[{ref['reference_id']}] {ref['file_path']}"
+        f"[{ref['reference_id']}] {os.path.basename(ref['file_path'])}"
         for ref in reference_list
         if ref["reference_id"]
     )
@@ -4292,13 +4308,20 @@ async def _get_node_data(
     query_param: QueryParam,
     query_embedding=None,
 ):
-    vector_score = query_param.vector_score if query_param.vector_score is not None else entities_vdb.global_config.get("VECTOR_SCORE", 0.2)
+    vector_score = (
+        query_param.vector_score
+        if query_param.vector_score is not None
+        else entities_vdb.global_config.get("VECTOR_SCORE", 0.2)
+    )
     logger.info(
         f"Query nodes: {query} (top_k:{query_param.top_k}, vector_score:{vector_score})"
     )
 
     results = await entities_vdb.query(
-        query, top_k=query_param.top_k, score_threshold=vector_score, query_embedding=query_embedding
+        query,
+        top_k=query_param.top_k,
+        score_threshold=vector_score,
+        query_embedding=query_embedding,
     )
 
     if not len(results):
@@ -4568,13 +4591,20 @@ async def _get_edge_data(
     query_param: QueryParam,
     query_embedding=None,
 ):
-    vector_score = query_param.vector_score if query_param.vector_score is not None else relationships_vdb.global_config.get("VECTOR_SCORE", 0.2)
+    vector_score = (
+        query_param.vector_score
+        if query_param.vector_score is not None
+        else relationships_vdb.global_config.get("VECTOR_SCORE", 0.2)
+    )
     logger.info(
         f"Query edges: {keywords} (top_k:{query_param.top_k}, vector_score:{vector_score})"
     )
 
     results = await relationships_vdb.query(
-        keywords, top_k=query_param.top_k, score_threshold=vector_score, query_embedding=query_embedding
+        keywords,
+        top_k=query_param.top_k,
+        score_threshold=vector_score,
+        query_embedding=query_embedding,
     )
 
     if not len(results):
@@ -5020,11 +5050,13 @@ async def naive_query(
             }
         )
 
+    import os
+
     text_units_str = "\n".join(
         json.dumps(text_unit, ensure_ascii=False) for text_unit in chunks_context
     )
     reference_list_str = "\n".join(
-        f"[{ref['reference_id']}] {ref['file_path']}"
+        f"[{ref['reference_id']}] {os.path.basename(ref['file_path'])}"
         for ref in reference_list
         if ref["reference_id"]
     )

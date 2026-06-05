@@ -20,6 +20,7 @@ sys.path.append(os.path.join(base_dir, "app"))
 from app.api.routers import (
     document_routes,
     graph_routes,
+    history_routes,
     insightnote_routes,
     query_routes,
 )
@@ -28,6 +29,7 @@ from app.api.utils_api import get_combined_auth_dependency
 from app.core import ZeRAG
 from app.core.document.config import MultiRAGConfig
 from app.core.document.multirag import MultiRAG
+from app.core.history.chat_history import chat_history_db
 from app.core.llm.gemini import gemini_complete_if_cache, gemini_embed
 from app.core.llm.ollama import ollama_embed, ollama_model_complete
 from app.core.llm.openai import openai_complete_if_cache, openai_embed
@@ -303,9 +305,22 @@ multi_rag = MultiRAG(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize ZeRAG
-    await rag.initialize_storages()
-    if hasattr(rag, "check_and_migrate_data"):
-        await rag.check_and_migrate_data()
+    try:
+        await rag.initialize_storages()
+        if hasattr(rag, "check_and_migrate_data"):
+            await rag.check_and_migrate_data()
+    except Exception as e:
+        logger.error(
+            f"ZeRAG storage initialization failed at startup: {e}. Gracefully continuing startup for sandbox fallbacks."
+        )
+
+    # Initialize PostgreSQL Chat History Database Tables
+    try:
+        await chat_history_db.initialize()
+    except Exception as e:
+        logger.warning(
+            f"PostgreSQL initialization failed at startup: {e}. Gracefully falling back to stateless mode."
+        )
 
     llm_binding = (
         "google" if config.LLM_BINDING.lower() == "gemini" else config.LLM_BINDING
@@ -347,6 +362,10 @@ Doc Status  : {config.DOC_STATUS_STORAGE}
 
     yield
     await rag.finalize_storages()
+    try:
+        await chat_history_db.close()
+    except Exception as e:
+        logger.warning(f"Error during PostgreSQL cleanup: {e}")
     logger.info("ZeRAG storage finalized")
 
 
@@ -377,6 +396,10 @@ app.include_router(
     tags=["Query"],
 )
 app.include_router(graph_routes.create_graph_routes(rag, api_key), tags=["Graph"])
+app.include_router(
+    history_routes.create_history_routes(api_key),
+    tags=["Chat History"],
+)
 app.include_router(
     insightnote_routes.create_insightnote_routes(
         rag, doc_manager, api_key, multi_rag=multi_rag

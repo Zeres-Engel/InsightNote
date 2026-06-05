@@ -35,8 +35,8 @@ _RENEWAL_MIN_INTERVAL = 60  # Minimum 60 seconds between renewals for same user
 # - /documents/pipeline_status: Client polls this very frequently (2s), renewal not needed
 _TOKEN_RENEWAL_SKIP_PATHS = [
     "/health",
-    "/documents/paginated",
-    "/documents/pipeline_status",
+    "/api/documents/paginated",
+    "/api/documents/pipeline_status",
 ]
 
 

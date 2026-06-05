@@ -88,3 +88,143 @@ def test_get_node_details(client):
     assert data["id"] == "policy_001"
     assert data["label"] == "Policy"
     assert data["properties"]["source"] == "Policy Main"
+
+
+def test_get_rag_instance_copies_file_processor_func(monkeypatch):
+    """Verify that get_rag_instance correctly copies file_processor_func from default_rag to isolated_rag."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.api.routers.insightnote_routes import get_rag_instance, rag_instances
+    from app.core import ZeRAG
+
+    test_workspace = "test_workspace_temp_999"
+    if test_workspace in rag_instances:
+        del rag_instances[test_workspace]
+
+    # Mock ZeRAG constructor and initialize_storages to prevent actual DB connection/setup
+    mock_init = MagicMock(return_value=None)
+    monkeypatch.setattr(ZeRAG, "__init__", mock_init)
+
+    mock_init_storages = AsyncMock()
+    monkeypatch.setattr(ZeRAG, "initialize_storages", mock_init_storages)
+
+    # Mock check_and_reinit_graph to do nothing
+    monkeypatch.setattr(
+        "app.api.routers.insightnote_routes.check_and_reinit_graph", AsyncMock()
+    )
+
+    # Create a dummy default_rag with doc_status type not being AsyncMock/MagicMock
+    default_rag = MagicMock()
+    default_rag.doc_status = "not-mock"
+
+    async def dummy_processor(file_path, doc_id=None, track_id=None):
+        return "processed content"
+
+    default_rag.file_processor_func = dummy_processor
+
+    # Call get_rag_instance using a temporary event loop
+    loop = asyncio.new_event_loop()
+    try:
+        isolated_rag = loop.run_until_complete(
+            get_rag_instance(test_workspace, default_rag)
+        )
+    finally:
+        loop.close()
+
+    # Check that file_processor_func was successfully copied
+    assert hasattr(isolated_rag, "file_processor_func")
+    assert isolated_rag.file_processor_func == dummy_processor
+
+    # Clean up the global registry
+    if test_workspace in rag_instances:
+        del rag_instances[test_workspace]
+
+
+def test_upload_file_stream(client, mock_rag):
+    """Test POST /documents/upload/stream enqueues file and returns NDJSON progress stream."""
+    from unittest.mock import AsyncMock
+
+    mock_rag.doc_status.get_doc_by_file_path.return_value = None
+    mock_rag.doc_status.get_docs_by_track_id.return_value = {}
+    mock_rag.apipeline_enqueue_file_reference = AsyncMock(
+        return_value=(True, "job_test_track_123")
+    )
+    mock_rag.apipeline_process_enqueue_documents = AsyncMock()
+
+    import server
+
+    headers = {}
+    if getattr(server, "api_key", None):
+        headers["X-API-Key"] = server.api_key
+
+    files = {"file": ("test_doc.pdf", b"dummy content", "application/pdf")}
+    response = client.post(
+        "/api/documents/upload/stream?workspace=test-workspace",
+        files=files,
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/x-ndjson"
+
+    # Read the streaming response lines
+    lines = [
+        line if isinstance(line, str) else line.decode("utf-8")
+        for line in response.iter_lines()
+    ]
+    assert len(lines) > 0
+
+    import json
+
+    first_chunk = json.loads(lines[0])
+    assert "job_id" in first_chunk
+    assert first_chunk["status"] == "processing"
+    assert [step["name"] for step in first_chunk["steps"]] == [
+        "load_file",
+        "document_understanding",
+        "workspace_save",
+    ]
+
+
+def test_chat_query_mode_fallback_when_graph_offline(client, mock_rag, caplog):
+    """Test that query mode falls back to naive when graph is not ready."""
+    import logging
+    from unittest.mock import MagicMock
+
+    # Enable caplog to capture warning logs at WARNING level
+    caplog.set_level(logging.WARNING)
+
+    # Simulate that we have ingested documents so it tries real querying
+    dummy_doc = MagicMock()
+    dummy_doc.file_path = "policy.pdf"
+    mock_rag.doc_status.get_docs_paginated.return_value = ([("doc_123", dummy_doc)], 1)
+
+    # Explicitly set graph_ready to False
+    mock_rag.graph_ready = False
+
+    # Request a query with mode "mix"
+    payload = {
+        "workspace_id": "test",
+        "message": "Verify this policy's fallback query mechanism.",
+        "mode": "mix",
+    }
+
+    response = client.post("/api/chat", json=payload)
+    assert response.status_code == 200
+
+    # Check that aquery_llm was called with mode="naive" instead of "mix"
+    assert mock_rag.aquery_llm.called
+    called_args, called_kwargs = mock_rag.aquery_llm.call_args
+    param = called_kwargs.get("param")
+    assert param is not None
+    assert param.mode == "naive"
+
+    # Assert that the warning log was output
+    warning_msgs = [rec.message for rec in caplog.records if rec.levelname == "WARNING"]
+    fallback_warning_exists = any(
+        "[QUERY] Neo4j database is offline/not initialized. Automatically falling back query mode from 'mix' to 'naive'."
+        in msg
+        for msg in warning_msgs
+    )
+    assert fallback_warning_exists

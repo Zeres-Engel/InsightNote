@@ -18,15 +18,15 @@ const BASE_URL = `${API_BASE_URL.replace(/\/$/, "")}/api`;
 // --- Sandbox Local Stores (for offline fallbacks) ---
 let localNotebooks: Notebook[] = [
   {
-    id: "notebook_insurance_demo",
-    name: "Insurance Analysis (Demo)",
-    source_count: 1,
-    status: "ready",
+    id: "default",
+    name: "Default GraphRAG Workspace",
+    source_count: 0,
+    status: "empty",
   },
 ];
 
 let localSources: Record<string, SourceListItem[]> = {
-  notebook_insurance_demo: [...MOCK_SOURCES],
+  default: [],
 };
 
 let localJobs: Record<
@@ -127,12 +127,8 @@ export async function getPipelineStatus(
         status: "ready",
         steps: [
           { name: "load_file", status: "done" },
-          { name: "mineru_parse", status: "done" },
-          { name: "chunking", status: "done" },
-          { name: "entity_extraction", status: "done" },
-          { name: "relationship_extraction", status: "done" },
-          { name: "neo4j_write", status: "done" },
-          { name: "vector_index", status: "done" },
+          { name: "document_understanding", status: "done" },
+          { name: "workspace_save", status: "done" },
         ],
       };
     }
@@ -140,12 +136,8 @@ export async function getPipelineStatus(
     const elapsed = (Date.now() - job.createdAt) / 1000;
     const step_definitions = [
       { name: "load_file", t: 0.0 },
-      { name: "mineru_parse", t: 1.5 },
-      { name: "chunking", t: 3.0 },
-      { name: "entity_extraction", t: 4.5 },
-      { name: "relationship_extraction", t: 6.0 },
-      { name: "neo4j_write", t: 7.5 },
-      { name: "vector_index", t: 9.0 },
+      { name: "document_understanding", t: 1.5 },
+      { name: "workspace_save", t: 7.5 },
     ];
 
     const steps = step_definitions.map((step) => {
@@ -326,6 +318,141 @@ export async function uploadFile(
       type: "pdf",
       status: "processing",
       pipeline_job_id: jobId,
+    };
+  }
+}
+
+export async function uploadFileStream(
+  notebookId: string,
+  file: File,
+  onProgress: (progress: PipelineJobResponse) => void,
+): Promise<{ source_id: string; name: string; type: string; status: string }> {
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const url = `${BASE_URL}/documents/upload/stream?workspace=${notebookId}&multi_modal=true&graph_mode=true`;
+    const response = await fetch(url, {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Upload failed: ${response.statusText}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error("Response body is not readable");
+    }
+
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+    let finalStatus = "processing";
+    let jobId = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const data = JSON.parse(line);
+          if (data.error) {
+            throw new Error(data.error);
+          }
+          if (data.job_id) {
+            jobId = data.job_id;
+          }
+          if (data.status) {
+            finalStatus = data.status;
+          }
+          // Invoke callback to update the progress in UI
+          onProgress({
+            job_id: data.job_id || jobId,
+            status: data.status,
+            steps: data.steps || [],
+            message: data.message,
+            percent: data.percent,
+            graph_changed: data.graph_changed,
+            graph_node_count: data.graph_node_count,
+            graph_link_count: data.graph_link_count,
+            new_node_ids: data.new_node_ids || [],
+            new_link_ids: data.new_link_ids || [],
+          });
+        } catch (e) {
+          console.error("Failed to parse NDJSON line:", e);
+        }
+      }
+    }
+
+    return {
+      source_id: `src_${jobId.replace("job_upload_", "") || Math.random().toString(36).substring(2, 8)}`,
+      name: file.name,
+      type: file.name.endsWith(".pdf") ? "pdf" : "text",
+      status: finalStatus,
+    };
+  } catch (e) {
+    console.warn("Backend down. Emulating upload streaming locally.", e);
+    const jobId = "job_upload_" + Math.random().toString(36).substring(2, 8);
+
+    // Simulate streaming updates locally
+    const step_definitions = [
+      "load_file",
+      "document_understanding",
+      "workspace_save",
+    ];
+
+    const nb = localNotebooks.find((n) => n.id === notebookId);
+    if (nb) {
+      nb.status = "processing";
+    }
+
+    for (let i = 0; i <= step_definitions.length; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      const steps = step_definitions.map((name, idx) => {
+        if (idx < i) return { name, status: "done" as const };
+        if (idx === i) return { name, status: "processing" as const };
+        return { name, status: "pending" as const };
+      });
+
+      const isDone = i === step_definitions.length;
+      onProgress({
+        job_id: jobId,
+        status: isDone ? "ready" : "processing",
+        steps,
+      });
+    }
+
+    if (nb) {
+      nb.status = "ready";
+      nb.source_count = (nb.source_count || 0) + 1;
+    }
+
+    // Populate local sources with simulated source
+    if (!localSources[notebookId]) {
+      localSources[notebookId] = [];
+    }
+    const newLocalSrc = {
+      id: "src_" + Math.random().toString(36).substring(2, 8),
+      name: file.name,
+      type: file.name.endsWith(".pdf") ? "pdf" : "text",
+      status: "ready",
+      entity_count: 5,
+      chunk_count: 8,
+    };
+    localSources[notebookId].push(newLocalSrc);
+
+    return {
+      source_id: newLocalSrc.id,
+      name: file.name,
+      type: newLocalSrc.type,
+      status: "ready",
     };
   }
 }
@@ -541,19 +668,107 @@ export async function getNodeDetails(
 
 // --- Chat Workspace ---
 
+// Fetch chat history from PostgreSQL (BE)
+export async function getChatHistory(notebookId: string): Promise<any[]> {
+  try {
+    const res = await fetch(`${BASE_URL}/notebooks/${notebookId}/chat/history`);
+    if (res.ok) {
+      return await res.json();
+    }
+    throw new Error();
+  } catch (e) {
+    console.warn("Backend down. Falling back to local chat history.");
+    return [];
+  }
+}
+
 export async function askChat(
   notebookId: string,
   message: string,
   chatHistory: any[] = [],
+  onChunk?: (chunk: string) => void,
+  onMetadata?: (metadata: any) => void,
 ): Promise<ChatResponse> {
   try {
     const res = await fetch(`${BASE_URL}/notebooks/${notebookId}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, chat_history: chatHistory }),
+      body: JSON.stringify({
+        user_prompt: message,
+        conversation_history: chatHistory,
+        stream: !!onChunk,
+      }),
     });
     if (res.ok) {
-      return await res.json();
+      if (onChunk) {
+        const reader = res.body?.getReader();
+        if (!reader) {
+          throw new Error("Response body is not readable");
+        }
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+        let finalResponse: ChatResponse = {
+          answer: "",
+          citations: [],
+          retrieval_steps: [],
+          graph_path: { node_ids: [], link_ids: [] },
+          suggested_questions: [],
+        };
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            const trimmedLine = line.trim();
+            if (!trimmedLine) continue;
+            if (trimmedLine.startsWith("data: ")) {
+              const dataStr = trimmedLine.slice(6).trim();
+              if (dataStr === "[DONE]") continue;
+              try {
+                const parsed = JSON.parse(dataStr);
+                if (parsed.type === "metadata") {
+                  finalResponse.citations = parsed.citations || [];
+                  finalResponse.retrieval_steps = parsed.retrieval_steps || [];
+                  finalResponse.graph_path = parsed.graph_path || {
+                    node_ids: [],
+                    link_ids: [],
+                  };
+                  finalResponse.nodes_metadata = parsed.nodes_metadata || [];
+                  finalResponse.links_metadata = parsed.links_metadata || [];
+                  finalResponse.suggested_questions =
+                    parsed.suggested_questions || [];
+                  if (onMetadata) {
+                    onMetadata(parsed);
+                  }
+                } else if (parsed.type === "content") {
+                  finalResponse.answer += parsed.content;
+                  onChunk(parsed.content);
+                } else if (parsed.type === "error") {
+                  console.error(
+                    "Stream error event from backend:",
+                    parsed.message,
+                  );
+                }
+              } catch (err) {
+                console.error(
+                  "Failed to parse SSE JSON:",
+                  err,
+                  "line:",
+                  trimmedLine,
+                );
+              }
+            }
+          }
+        }
+        return finalResponse;
+      } else {
+        return await res.json();
+      }
     }
     throw new Error();
   } catch (e) {
@@ -563,6 +778,8 @@ export async function askChat(
     const isResume =
       notebookId.includes("resume") ||
       (nb && nb.name.toLowerCase().includes("resume"));
+
+    let presetResponse: ChatResponse;
 
     if (isResume) {
       // Find matching resume Q&A key
@@ -701,59 +918,91 @@ export async function askChat(
       const matchedKey = Object.keys(resumeQA).find((q) =>
         msgLower.includes(q),
       );
-      if (matchedKey) return resumeQA[matchedKey];
-
-      // Generic resume fallback
-      return {
-        answer: `Nguyen Phuoc Thanh is an AI Engineer who possesses solid production experience in building hybrid vector-graph databases and RAG pipelines (using Neo4j, Qdrant, LangChain, and LightRAG). Feel free to ask more specific questions about his FPT Software projects, Rizlum systems, or overall suitability!`,
-        citations: [
-          {
-            source_id: "src_resume_pdf",
-            title: "Resume.pdf",
-            chunk_id: "chunk_res_fallback",
-            text: "Expert AI Engineer. Built highly optimized GraphRAG indexing & layout-aware MinerU parsers.",
-            score: 0.95,
-          },
-        ],
-        retrieval_steps: [
-          "Queried local sandbox database",
-          "Retrieved overall candidate summary",
-          "Generated responsive fallback answer",
-        ],
-        graph_path: {
-          node_ids: [
-            "person_nguyen_phuoc_thanh",
-            "role_ai_engineer",
-            "skill_graphrag",
+      if (matchedKey) {
+        presetResponse = resumeQA[matchedKey];
+      } else {
+        presetResponse = {
+          answer: `Nguyen Phuoc Thanh is an AI Engineer who possesses solid production experience in building hybrid vector-graph databases and RAG pipelines (using Neo4j, Qdrant, LangChain, and LightRAG). Feel free to ask more specific questions about his FPT Software projects, Rizlum systems, or overall suitability!`,
+          citations: [
+            {
+              source_id: "src_resume_pdf",
+              title: "Resume.pdf",
+              chunk_id: "chunk_res_fallback",
+              text: "Expert AI Engineer. Built highly optimized GraphRAG indexing & layout-aware MinerU parsers.",
+              score: 0.95,
+            },
           ],
-          link_ids: ["edge_r01", "edge_r04"],
-        },
-      };
+          retrieval_steps: [
+            "Queried local sandbox database",
+            "Retrieved overall candidate summary",
+            "Generated responsive fallback answer",
+          ],
+          graph_path: {
+            node_ids: [
+              "person_nguyen_phuoc_thanh",
+              "role_ai_engineer",
+              "skill_graphrag",
+            ],
+            link_ids: ["edge_r01", "edge_r04"],
+          },
+        };
+      }
     } else {
       // Insurance fallback
       const matchedKey = Object.keys(PRESET_QA).find(
         (q) => msgLower.includes(q) || q.includes(msgLower),
       );
-      if (matchedKey) return PRESET_QA[matchedKey];
+      if (matchedKey) {
+        presetResponse = PRESET_QA[matchedKey];
+      } else {
+        presetResponse = {
+          answer: `You asked: "${message}". Currently, I am running in fallback sandbox mode because the backend server is unreachable. Please create a notebook named "Resume Analysis", load the "example/Resume.pdf" source, and ask resume-specific questions to witness candidate profile mapping!`,
+          citations: [
+            {
+              source_id: "src_001",
+              title: "Insurance Policy Demo",
+              chunk_id: "chunk_ins_fallback",
+              text: "Insurance terms and general policies.",
+              score: 0.5,
+            },
+          ],
+          retrieval_steps: [
+            "Backend unreachable fallback activated",
+            "Encouraged creating a notebook to demo the progressive resume indexer",
+          ],
+          graph_path: { node_ids: [], link_ids: [] },
+        };
+      }
     }
 
-    return {
-      answer: `You asked: "${message}". Currently, I am running in fallback sandbox mode because the backend server is unreachable. Please create a notebook named "Resume Analysis", load the "example/Resume.pdf" source, and ask resume-specific questions to witness candidate profile mapping!`,
-      citations: [
-        {
-          source_id: "src_001",
-          title: "Insurance Policy Demo",
-          chunk_id: "chunk_ins_fallback",
-          text: "Insurance terms and general policies.",
-          score: 0.5,
-        },
-      ],
-      retrieval_steps: [
-        "Backend unreachable fallback activated",
-        "Encouraged creating a notebook to demo the progressive resume indexer",
-      ],
-      graph_path: { node_ids: [], link_ids: [] },
-    };
+    if (onChunk) {
+      if (onMetadata) {
+        onMetadata({
+          citations: presetResponse.citations,
+          retrieval_steps: presetResponse.retrieval_steps,
+          graph_path: presetResponse.graph_path,
+          nodes_metadata: [],
+          links_metadata: [],
+          suggested_questions: presetResponse.suggested_questions || [],
+        });
+      }
+      const words = presetResponse.answer.split(" ");
+      let currentIdx = 0;
+      return new Promise<ChatResponse>((resolve) => {
+        const interval = setInterval(() => {
+          if (currentIdx >= words.length) {
+            clearInterval(interval);
+            resolve(presetResponse);
+            return;
+          }
+          const space = currentIdx > 0 ? " " : "";
+          onChunk(space + words[currentIdx]);
+          currentIdx++;
+        }, 30);
+      });
+    } else {
+      return presetResponse;
+    }
   }
 }
 
