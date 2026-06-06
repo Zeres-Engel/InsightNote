@@ -73,43 +73,34 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
 
   const handleUrlSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!urlInput.trim() || urlSubmitting) return;
-    setUrlSubmitting(true);
-    try {
-      await onAddUrl(urlInput.trim());
-      setUrlInput("");
-    } finally {
-      setUrlSubmitting(false);
-    }
+    if (!urlInput.trim()) return;
+    const url = urlInput.trim();
+    setUrlInput("");
+    // Process concurrently in background
+    void onAddUrl(url);
   };
 
   const handleTextSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!textInput.trim() || textSubmitting) return;
-    setTextSubmitting(true);
-    try {
-      const content = noteTitle.trim()
-        ? `Title: ${noteTitle.trim()}\n\n${textInput.trim()}`
-        : textInput.trim();
-      await onAddText(content);
-      setTextInput("");
-      setNoteTitle("");
-    } finally {
-      setTextSubmitting(false);
-    }
+    if (!textInput.trim()) return;
+    const title = noteTitle.trim();
+    const content = title
+      ? `Title: ${title}\n\n${textInput.trim()}`
+      : textInput.trim();
+    setTextInput("");
+    setNoteTitle("");
+    // Process concurrently in background
+    void onAddText(content);
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
-      setFileSubmitting(true);
-      try {
-        const filesArray = Array.from(e.target.files);
-        // Upload all selected files concurrently
-        await Promise.all(filesArray.map((file) => onUploadFile(file)));
-      } finally {
-        setFileSubmitting(false);
-        e.target.value = ""; // Clear file input
-      }
+      const filesArray = Array.from(e.target.files);
+      e.target.value = ""; // Clear file input instantly for next selection
+      // Process concurrently in background
+      filesArray.forEach((file) => {
+        void onUploadFile(file);
+      });
     }
   };
 
@@ -128,14 +119,11 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
     e.stopPropagation();
     setDragActive(false);
     if (e.dataTransfer.files) {
-      setFileSubmitting(true);
-      try {
-        const filesArray = Array.from(e.dataTransfer.files);
-        // Upload all dropped files concurrently
-        await Promise.all(filesArray.map((file) => onUploadFile(file)));
-      } finally {
-        setFileSubmitting(false);
-      }
+      const filesArray = Array.from(e.dataTransfer.files);
+      // Process concurrently in background
+      filesArray.forEach((file) => {
+        void onUploadFile(file);
+      });
     }
   };
 
@@ -236,7 +224,6 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
                 accept=".pdf,.txt,.md,.doc,.docx,.ppt,.pptx,.xls,.xlsx"
                 multiple
                 onChange={handleFileChange}
-                disabled={fileSubmitting}
                 className="hidden"
               />
               <label
@@ -245,7 +232,9 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
               >
                 <UploadCloud className="w-6 h-6 text-slate-500" />
                 <div className="text-[11px] font-semibold text-slate-350">
-                  {fileSubmitting ? "Enqueuing files..." : "Upload PDF / TXT / Office"}
+                  {fileSubmitting
+                    ? "Enqueuing files..."
+                    : "Upload PDF / TXT / Office"}
                 </div>
                 <p className="text-[9px] text-slate-500">
                   Click or drag & drop multiple files
@@ -265,20 +254,15 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
                 placeholder="https://example.com/terms"
                 value={urlInput}
                 onChange={(e) => setUrlInput(e.target.value)}
-                disabled={urlSubmitting}
                 className="w-full bg-slate-950 border border-slate-850 focus:border-emerald-500/80 focus:ring-1 focus:ring-emerald-500/30 rounded-lg pl-8.5 pr-2 py-1.5 text-xs text-slate-200 placeholder-slate-650 outline-none transition"
               />
             </div>
             <button
               type="submit"
-              disabled={urlSubmitting || !urlInput.trim()}
+              disabled={!urlInput.trim()}
               className="w-full bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 disabled:opacity-50 disabled:hover:bg-emerald-600 text-slate-950 font-bold text-xs py-2 rounded-lg transition flex items-center justify-center gap-1 shadow-lg shadow-emerald-500/10 cursor-pointer"
             >
-              {urlSubmitting ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Plus className="w-3.5 h-3.5" />
-              )}
+              <Plus className="w-3.5 h-3.5" />
               Add Web Source
             </button>
           </form>
@@ -291,7 +275,6 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
               placeholder="Note Title (Optional)"
               value={noteTitle}
               onChange={(e) => setNoteTitle(e.target.value)}
-              disabled={textSubmitting}
               className="w-full bg-slate-950 border border-slate-850 focus:border-emerald-500/80 focus:ring-1 focus:ring-emerald-500/30 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 placeholder-slate-650 outline-none transition"
             />
             <textarea
@@ -300,19 +283,14 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
               placeholder="Paste raw text details here..."
               value={textInput}
               onChange={(e) => setTextInput(e.target.value)}
-              disabled={textSubmitting}
               className="w-full bg-slate-950 border border-slate-850 focus:border-emerald-500/80 focus:ring-1 focus:ring-emerald-500/30 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 placeholder-slate-650 outline-none transition resize-none"
             />
             <button
               type="submit"
-              disabled={textSubmitting || !textInput.trim()}
+              disabled={!textInput.trim()}
               className="w-full bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 disabled:opacity-50 disabled:hover:bg-emerald-600 text-slate-950 font-bold text-xs py-2 rounded-lg transition flex items-center justify-center gap-1 shadow-lg shadow-emerald-500/10 cursor-pointer"
             >
-              {textSubmitting ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Plus className="w-3.5 h-3.5" />
-              )}
+              <Plus className="w-3.5 h-3.5" />
               Save Text Note
             </button>
           </form>
@@ -335,7 +313,11 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
           </div>
         ) : (
           sources.map((src) => {
-            const job = pipelineJobs[src.id] || (src.pipeline_job_id ? pipelineJobs[src.pipeline_job_id] : undefined);
+            const job =
+              pipelineJobs[src.id] ||
+              (src.pipeline_job_id
+                ? pipelineJobs[src.pipeline_job_id]
+                : undefined);
             const jobTerminal =
               !!job &&
               (job.status === "ready" ||
@@ -386,7 +368,9 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
                       <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded uppercase font-bold border border-slate-700/50">
                         {src.type}
                       </span>
-                      {src.status === "ready" || src.status === "active" || jobTerminal ? (
+                      {src.status === "ready" ||
+                      src.status === "active" ||
+                      jobTerminal ? (
                         <span className="text-[10px] text-emerald-500 flex items-center gap-1 font-semibold">
                           <CheckCircle2 className="w-3 h-3" />
                           Ready
@@ -475,7 +459,8 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
                 )}
 
                 {/* Stats like entity count if active */}
-                {((src.entity_count || 0) > 0 || (src.chunk_count || 0) > 0) && (
+                {((src.entity_count || 0) > 0 ||
+                  (src.chunk_count || 0) > 0) && (
                   <div className="flex gap-3 mt-2.5 pt-2.5 border-t border-slate-900/60 text-[10px] text-slate-400">
                     {(src.entity_count || 0) > 0 && (
                       <span className="flex items-center gap-1.5 font-bold">

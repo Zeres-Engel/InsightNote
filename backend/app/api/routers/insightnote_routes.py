@@ -343,40 +343,84 @@ def _filter_citations_to_answer(
     return citations[: min(3, len(citations))]
 
 
+def _sanitize_string(text: str) -> str:
+    if not text:
+        return ""
+
+    # Replace Windows-style absolute paths (e.g., C:\Users\...) and Unix paths (e.g., /home/user/...)
+    # with just the clean base filename
+    def path_replacer(match):
+        path_str = match.group(0)
+        return os.path.basename(path_str)
+
+    # Windows path regex (capital letter drive, colon, backslashes, etc.)
+    text = re.sub(
+        r'[a-zA-Z]:\\[^\s"\'\{\}\[\]<>]*\\[^\s"\'\{\}\[\]<>]*', path_replacer, text
+    )
+    # Unix path regex
+    text = re.sub(r'/[^\s"\'\{\}\[\]<>]+/([^\s"\'\{\}\[\]<>]+)', path_replacer, text)
+
+    # Strip out sensitive raw identifiers like doc-xxx, chunk-xxx, job-xxx, src-xxx
+    text = re.sub(r"\b(doc|chunk|job|src|ref|track)-[a-f0-9]{6,64}\b", "", text)
+
+    # Clean up excess spaces or metadata parameters
+    text = re.sub(r"metadata\s*=\s*\{[^\}]*\}", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
 def _humanize_pipeline_message(message: str, source_type: str) -> str:
     if not message:
         return ""
-    
+
     # Clean log prefixes (timestamps, levels)
     cleaned = message.strip()
-    cleaned = re.sub(r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+\[?(INFO|WARNING|ERROR|DEBUG|SUCCESS)\]?\s*", "", cleaned)
+    cleaned = re.sub(
+        r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+\[?(INFO|WARNING|ERROR|DEBUG|SUCCESS)\]?\s*",
+        "",
+        cleaned,
+    )
     cleaned = re.sub(r"^(INFO|WARNING|ERROR|DEBUG|SUCCESS)\s*:\s*", "", cleaned)
     cleaned = cleaned.strip()
 
     if "Phase 1: Processing" in cleaned:
         match = re.search(r"Phase 1:\s*Processing\s*(\d+)\s*entities", cleaned)
         n = match.group(1) if match else ""
-        return f"Exploring {n} discovered entities..." if n else "Exploring discovered entities..."
-        
+        return (
+            f"Exploring {n} discovered entities..."
+            if n
+            else "Exploring discovered entities..."
+        )
+
     if "Phase 2: Processing" in cleaned:
         match = re.search(r"Phase 2:\s*Processing\s*(\d+)\s*relations", cleaned)
         n = match.group(1) if match else ""
-        return f"Mapping {n} relationship links..." if n else "Mapping relationship links..."
-        
+        return (
+            f"Mapping {n} relationship links..."
+            if n
+            else "Mapping relationship links..."
+        )
+
     if "Phase 3: Updating" in cleaned:
         return "Finalizing indexed knowledge..."
-        
+
     chunk_match = re.search(
         r"Chunk\s+(\d+)\s+of\s+(\d+)\s+extracted\s+(\d+)\s+Ent\s+\+\s+(\d+)\s+Rel",
         cleaned,
     )
     if chunk_match:
         cur, total, ent, rel = chunk_match.groups()
-        return f"Semantic extraction chunk {cur}/{total}: {ent} entities + {rel} relations"
-        
-    if "Completed merging" in cleaned or "Completed processing file" in cleaned or "Enqueued document processing pipeline stopped" in cleaned:
+        return (
+            f"Semantic extraction chunk {cur}/{total}: {ent} entities + {rel} relations"
+        )
+
+    if (
+        "Completed merging" in cleaned
+        or "Completed processing file" in cleaned
+        or "Enqueued document processing pipeline stopped" in cleaned
+    ):
         return "Indexing completed successfully."
-        
+
     if "[Pipeline]" in cleaned:
         return (
             "Indexing web source into graph memory..."
@@ -385,31 +429,31 @@ def _humanize_pipeline_message(message: str, source_type: str) -> str:
             if source_type == "note"
             else "Indexing document into graph memory..."
         )
-        
+
     if "google_genai.models: AFC is enabled" in cleaned:
         return "Connecting to Gemini LLM..."
-        
+
     if "LLM func:" in cleaned and "workers initialized" in cleaned:
         return "Initializing AI extraction workers..."
-        
+
     if "== LLM cache == saving" in cleaned:
         return "Caching semantic extraction results..."
-        
+
     if "Merging stage" in cleaned:
         return "Merging knowledge graph updates..."
-        
+
     if "Merged:" in cleaned or "LLMmrg:" in cleaned:
         match = re.search(r"(?:Merged|LLMmrg):\s*`([^`]+)`", cleaned)
         if match:
             return f"Aligning entity '{match.group(1)}'..."
         return "Aligning extracted entities..."
-        
+
     if "In memory DB persist to disk" in cleaned:
         return "Saving graph database to disk..."
-        
+
     if "Starting crawl" in cleaned or "crawl" in cleaned.lower():
         return "Crawling web page content..."
-        
+
     # MinerU / parser logs
     if "Executing mineru command" in cleaned:
         return "Starting multimodal document processing..."
@@ -418,29 +462,51 @@ def _humanize_pipeline_message(message: str, source_type: str) -> str:
     if "Layout Predict" in cleaned:
         match = re.search(r"Layout Predict:\s*(\d+)%", cleaned)
         p = match.group(1) if match else ""
-        return f"Understanding document layout {p}%..." if p else "Understanding document layout..."
+        return (
+            f"Understanding document layout {p}%..."
+            if p
+            else "Understanding document layout..."
+        )
     if "MFD Predict" in cleaned:
         match = re.search(r"MFD Predict:\s*(\d+)%", cleaned)
         p = match.group(1) if match else ""
-        return f"Reading structured content {p}%..." if p else "Reading structured content..."
+        return (
+            f"Reading structured content {p}%..."
+            if p
+            else "Reading structured content..."
+        )
     if "OCR-det ch" in cleaned:
         match = re.search(r"OCR-det ch:\s*(\d+)%", cleaned)
         p = match.group(1) if match else ""
-        return f"Locating document text regions {p}%..." if p else "Locating document text regions..."
+        return (
+            f"Locating document text regions {p}%..."
+            if p
+            else "Locating document text regions..."
+        )
     if "OCR-rec Predict" in cleaned:
         match = re.search(r"OCR-rec Predict:\s*(\d+)%", cleaned)
         p = match.group(1) if match else ""
-        return f"Reading text and symbols {p}%..." if p else "Reading text and symbols..."
+        return (
+            f"Reading text and symbols {p}%..." if p else "Reading text and symbols..."
+        )
     if "Processing pages" in cleaned:
         match = re.search(r"Processing pages:\s*(\d+)%", cleaned)
         p = match.group(1) if match else ""
-        return f"Assembling structured pages {p}%..." if p else "Assembling structured pages..."
+        return (
+            f"Assembling structured pages {p}%..."
+            if p
+            else "Assembling structured pages..."
+        )
 
     cleaned = re.sub(r"^[a-zA-Z_][a-zA-Z0-9_\.]+\s*:\s*", "", cleaned)
-    if "FutureWarning" in cleaned or "weights_only" in cleaned or "weights = torch.load" in cleaned:
+    if (
+        "FutureWarning" in cleaned
+        or "weights_only" in cleaned
+        or "weights = torch.load" in cleaned
+    ):
         return "Loading deep learning weights..."
-        
-    return cleaned
+
+    return _sanitize_string(cleaned)
 
 
 # --- HIGH-FIDELITY MOCK DATABASES ---
@@ -1298,6 +1364,19 @@ def create_insightnote_routes(
                 nid, request.name, "empty", 0
             )
             logger.info(f"Notebook created in PostgreSQL: {nid} ({request.name})")
+
+            # Create physical versions of notebook storage across MongoDB, Neo4j, and Qdrant concurrently
+            try:
+                await get_rag_instance(nid, rag)
+                logger.info(
+                    f"Successfully initialized multi-database storages for new notebook: {nid}"
+                )
+            except Exception as store_err:
+                logger.warning(
+                    f"Optional storage backends (Neo4j/Qdrant) initialization had warning: {store_err}. "
+                    f"Notebook is fully functional in PostgreSQL and MongoDB baseline."
+                )
+
             return NotebookListItem(
                 id=new_nb["id"],
                 name=new_nb["name"],
@@ -1515,12 +1594,13 @@ def create_insightnote_routes(
             else:
                 status = "processing"
         else:
-            # Fallback to simulated completion if no real docs are registered yet
-            if all_done:
-                status = "ready"
-                await chat_history_db.update_notebook_status(
-                    notebook_id, status="ready", source_count=1
-                )
+            # If no real docs are registered yet in MongoDB, it means the pipeline is still parsing the document or starting up!
+            # So the status MUST remain "processing" (not "ready") to prevent premature transition!
+            status = "processing"
+            # Force the final step to "processing" so it does not show as completed on the UI
+            for s in steps:
+                if s.name == final_step_name:
+                    s.status = "processing"
 
         # Real-time Progressive Extracted Nodes and Links fetching
         extracted_nodes: List[GraphNode] = []
@@ -1587,7 +1667,8 @@ def create_insightnote_routes(
                 "pipeline_status", workspace=notebook_id
             )
             if pipeline_status:
-                latest_message = pipeline_status.get("latest_message", "")
+                raw_message = pipeline_status.get("latest_message", "")
+                latest_message = _humanize_pipeline_message(raw_message, source_type)
                 done_steps_count = sum(1 for s in steps if s.status == "done")
                 progress_percentage = (done_steps_count / len(steps)) * 100.0
         except Exception as ex:

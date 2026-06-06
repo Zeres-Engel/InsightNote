@@ -722,6 +722,7 @@ class ZeRAG:
                         raise e
 
             # Initialize Vector DBs
+            self.vector_ready = True
             for storage_name, storage in [
                 ("entities_vdb", self.entities_vdb),
                 ("relationships_vdb", self.relationships_vdb),
@@ -735,10 +736,11 @@ class ZeRAG:
                                 f"[{self.workspace}] Qdrant (VectorDB) initialized successfully"
                             )
                     except Exception as e:
-                        logger.error(
-                            f"[{self.workspace}] Failed to initialize {storage_name}: {e}"
+                        self.vector_ready = False
+                        logger.warning(
+                            f"[{self.workspace}] Qdrant VectorDB ({storage_name}) initialization failed: {e}. "
+                            "không xài được vector mode nha chỉ query được naive nhớ log báo đồ đầy đủ nha"
                         )
-                        raise e
 
             # Initialize Graph Storage (Neo4j)
             try:
