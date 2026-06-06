@@ -375,19 +375,27 @@ def _citation_title_from_reference(
 ) -> str:
     """Return a clean user-facing citation title without leaking local paths."""
     source_titles = source_titles or {}
+
+    # 1. Try lookup by reference_id / doc_id directly! (The ultimate bulletproof match!)
+    ref_id = str(ref.get("reference_id") or "").strip()
+    if ref_id:
+        title = source_titles.get(ref_id)
+        if title:
+            return title
+
     normalized_path = str(file_path or "").strip()
+    if normalized_path:
+        # 2. Try lookup by normalized path (slashes standardized)
+        norm_key = normalized_path.replace("\\", "/")
+        title = source_titles.get(norm_key) or source_titles.get(norm_key.rstrip("/"))
+        if title:
+            return title
 
-    # 1. Try lookup by normalized path (slashes standardized)
-    norm_key = normalized_path.replace("\\", "/")
-    title = source_titles.get(norm_key) or source_titles.get(norm_key.rstrip("/"))
-    if title:
-        return title
-
-    # 2. Try lookup by lowercase basename (immune to absolute/relative/slash mismatches!)
-    base_key = os.path.basename(normalized_path).strip().lower()
-    title = source_titles.get(base_key)
-    if title:
-        return title
+        # 3. Try lookup by lowercase basename (immune to absolute/relative/slash mismatches!)
+        base_key = os.path.basename(normalized_path).strip().lower()
+        title = source_titles.get(base_key)
+        if title:
+            return title
 
     candidates = [
         ref.get("title"),
@@ -3109,10 +3117,13 @@ def create_insightnote_routes(
                         if not source_title:
                             continue
 
-                        # Map using multiple keys (full path normalized and clean lower basename) for bulletproof matching
+                        # Map using multiple keys (doc_id, full path normalized, and clean lower basename) for bulletproof matching
                         norm_key = source_path.replace("\\", "/").strip()
                         base_key = os.path.basename(source_path).strip().lower()
 
+                        source_titles_by_path[doc_id] = (
+                            source_title  # Ultimate ID Match!
+                        )
                         source_titles_by_path[norm_key] = source_title
                         source_titles_by_path[base_key] = source_title
                         source_titles_by_path[source_title] = source_title
