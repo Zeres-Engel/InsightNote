@@ -1,8 +1,11 @@
 import asyncio
 import logging
 import os
+import platform
+import re
 import time
 import traceback
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import (
@@ -34,6 +37,8 @@ from app.core.utils import (
 logger = logging.getLogger("zerag-insightnote")
 DEFAULT_WORKSPACE = "default"
 DEFAULT_NOTEBOOK_ID = "default"
+TEXT_SOURCE_FORMATS = {".txt", ".md"}
+OFFICE_SOURCE_FORMATS = {".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}
 
 # --- Define Pydantic schemas for Multi-Notebook API Contract ---
 
@@ -93,6 +98,7 @@ class SourceListItem(BaseModel):
     status: str
     entity_count: int = 0
     chunk_count: int = 0
+    pipeline_job_id: Optional[str] = None
 
 
 class CitationItem(BaseModel):
@@ -118,6 +124,7 @@ class ChatRequest(BaseModel):
     conversation_history: Optional[List[Dict[str, Any]]] = None
     conversation_id: Optional[str] = None
     stream: Optional[bool] = False
+    rerank: Optional[bool] = True
 
 
 class DefaultQueryRequest(BaseModel):
@@ -183,44 +190,261 @@ class PipelineJobResponse(BaseModel):
     latest_message: str = ""
 
 
-class RerankRequest(BaseModel):
-    query: str = Field(..., description="The query to rank documents against.")
-    documents: List[str] = Field(
-        ..., description="List of document texts or chunks to rerank."
-    )
-    top_n: Optional[int] = Field(None, description="Number of top results to return.")
-    binding: Optional[str] = Field(
-        None, description="Rerank provider binding: jina | cohere | ali"
-    )
-    model: Optional[str] = Field(None, description="Rerank model name override.")
-    base_url: Optional[str] = Field(None, description="Rerank API endpoint override.")
-    api_key: Optional[str] = Field(None, description="API key override.")
+def _source_type_from_filename(filename: str) -> str:
+    suffix = Path(filename).suffix.lower()
+    if suffix == ".pdf":
+        return "pdf"
+    if suffix in TEXT_SOURCE_FORMATS:
+        return "text"
+    if suffix in {".doc", ".docx"}:
+        return "docx"
+    if suffix in {".ppt", ".pptx"}:
+        return "pptx"
+    if suffix in {".xls", ".xlsx"}:
+        return "xlsx"
+    return "file"
 
 
-class RerankResultItem(BaseModel):
-    index: int = Field(
-        ..., description="The original index of the document in the request list."
-    )
-    relevance_score: float = Field(
-        ..., description="The calculated relevance score of the document."
-    )
-    text: Optional[str] = Field(None, description="The content of the document.")
+def _prepare_ingest_file(file_path: Path, notebook_input_dir: Path) -> Path:
+    """Normalize uploaded/generated sources to a PDF when the RAG parser needs it."""
+    from app.core.document.parser import Parser
+
+    suffix = file_path.suffix.lower()
+    if suffix in TEXT_SOURCE_FORMATS:
+        pdf_path = Parser.convert_text_to_pdf(file_path, output_dir=notebook_input_dir)
+    elif suffix in OFFICE_SOURCE_FORMATS:
+        pdf_path = Parser.convert_office_to_pdf(
+            file_path, output_dir=notebook_input_dir
+        )
+    else:
+        return file_path
+
+    try:
+        if file_path.exists() and file_path.resolve() != pdf_path.resolve():
+            os.remove(file_path)
+    except Exception as clean_err:
+        logger.warning(f"Failed to remove converted source {file_path}: {clean_err}")
+
+    return pdf_path
 
 
-class RerankResponse(BaseModel):
-    results: List[RerankResultItem] = Field(
-        ..., description="List of reranked results."
+def _html_to_text(html: str) -> str:
+    """Extract readable text with stdlib only so URL ingest does not depend on bs4."""
+    from html import unescape
+    from html.parser import HTMLParser
+
+    class ReadableHTMLParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.skip_depth = 0
+            self.parts: List[str] = []
+
+        def handle_starttag(self, tag, attrs):
+            if tag in {"script", "style", "nav", "header", "footer"}:
+                self.skip_depth += 1
+            if tag in {
+                "p",
+                "br",
+                "div",
+                "section",
+                "article",
+                "li",
+                "tr",
+                "h1",
+                "h2",
+                "h3",
+            }:
+                self.parts.append("\n")
+
+        def handle_endtag(self, tag):
+            if (
+                tag in {"script", "style", "nav", "header", "footer"}
+                and self.skip_depth
+            ):
+                self.skip_depth -= 1
+            if tag in {"p", "div", "section", "article", "li", "tr", "h1", "h2", "h3"}:
+                self.parts.append("\n")
+
+        def handle_data(self, data):
+            if not self.skip_depth:
+                text = data.strip()
+                if text:
+                    self.parts.append(text)
+
+    parser = ReadableHTMLParser()
+    parser.feed(html)
+    lines = [unescape(part).strip() for part in parser.parts if part.strip()]
+    return "\n".join(lines)
+
+
+async def _scrape_url_to_markdown(url: str, clean_name: str) -> str:
+    logger.info(f"[SCRAPE] Starting crawl for: {url}")
+    scraped_content = ""
+    use_crawl4ai = (
+        os.getenv("INSIGHTNOTE_USE_CRAWL4AI", "").lower() in {"1", "true", "yes"}
+        and platform.system() != "Windows"
     )
+    if use_crawl4ai:
+        try:
+            from crawl4ai import AsyncWebCrawler
+
+            async with AsyncWebCrawler() as crawler:
+                crawl_res = await crawler.arun(url=url)
+                if crawl_res and crawl_res.markdown:
+                    scraped_content = crawl_res.markdown
+        except Exception as crawl_err:
+            logger.warning(
+                f"Crawl4AI failed: {crawl_err}. Falling back to standard scraper."
+            )
+
+    if not scraped_content:
+        import aiohttp
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(url, allow_redirects=True, timeout=15) as resp:
+                resp.raise_for_status()
+                html = await resp.text(errors="ignore")
+
+        title_match = re.search(
+            r"<title[^>]*>(.*?)</title>",
+            html,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        page_title = (
+            re.sub(r"\s+", " ", title_match.group(1)).strip()
+            if title_match
+            else clean_name
+        )
+        scraped_content = f"# {page_title}\n\nURL: {url}\n\n{_html_to_text(html)}"
+
+    lines = [line.strip() for line in scraped_content.splitlines() if line.strip()]
+    final_text = "\n\n".join(lines)
+    if not final_text:
+        raise ValueError("Scraped page produced no indexable text")
+    return final_text
+
+
+def _filter_citations_to_answer(
+    answer: str, citations: List["CitationItem"]
+) -> List["CitationItem"]:
+    """Keep only citations explicitly referenced in the answer as [1], [2], etc."""
+    if not citations:
+        return []
+    referenced_indexes = []
+    for match in re.finditer(r"\[(\d+)\]", answer or ""):
+        index = int(match.group(1)) - 1
+        if 0 <= index < len(citations) and index not in referenced_indexes:
+            referenced_indexes.append(index)
+    if referenced_indexes:
+        return [citations[index] for index in referenced_indexes]
+    return citations[: min(3, len(citations))]
+
+
+def _humanize_pipeline_message(message: str, source_type: str) -> str:
+    if not message:
+        return ""
+    
+    # Clean log prefixes (timestamps, levels)
+    cleaned = message.strip()
+    cleaned = re.sub(r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+\[?(INFO|WARNING|ERROR|DEBUG|SUCCESS)\]?\s*", "", cleaned)
+    cleaned = re.sub(r"^(INFO|WARNING|ERROR|DEBUG|SUCCESS)\s*:\s*", "", cleaned)
+    cleaned = cleaned.strip()
+
+    if "Phase 1: Processing" in cleaned:
+        match = re.search(r"Phase 1:\s*Processing\s*(\d+)\s*entities", cleaned)
+        n = match.group(1) if match else ""
+        return f"Exploring {n} discovered entities..." if n else "Exploring discovered entities..."
+        
+    if "Phase 2: Processing" in cleaned:
+        match = re.search(r"Phase 2:\s*Processing\s*(\d+)\s*relations", cleaned)
+        n = match.group(1) if match else ""
+        return f"Mapping {n} relationship links..." if n else "Mapping relationship links..."
+        
+    if "Phase 3: Updating" in cleaned:
+        return "Finalizing indexed knowledge..."
+        
+    chunk_match = re.search(
+        r"Chunk\s+(\d+)\s+of\s+(\d+)\s+extracted\s+(\d+)\s+Ent\s+\+\s+(\d+)\s+Rel",
+        cleaned,
+    )
+    if chunk_match:
+        cur, total, ent, rel = chunk_match.groups()
+        return f"Semantic extraction chunk {cur}/{total}: {ent} entities + {rel} relations"
+        
+    if "Completed merging" in cleaned or "Completed processing file" in cleaned or "Enqueued document processing pipeline stopped" in cleaned:
+        return "Indexing completed successfully."
+        
+    if "[Pipeline]" in cleaned:
+        return (
+            "Indexing web source into graph memory..."
+            if source_type == "url"
+            else "Indexing note into graph memory..."
+            if source_type == "note"
+            else "Indexing document into graph memory..."
+        )
+        
+    if "google_genai.models: AFC is enabled" in cleaned:
+        return "Connecting to Gemini LLM..."
+        
+    if "LLM func:" in cleaned and "workers initialized" in cleaned:
+        return "Initializing AI extraction workers..."
+        
+    if "== LLM cache == saving" in cleaned:
+        return "Caching semantic extraction results..."
+        
+    if "Merging stage" in cleaned:
+        return "Merging knowledge graph updates..."
+        
+    if "Merged:" in cleaned or "LLMmrg:" in cleaned:
+        match = re.search(r"(?:Merged|LLMmrg):\s*`([^`]+)`", cleaned)
+        if match:
+            return f"Aligning entity '{match.group(1)}'..."
+        return "Aligning extracted entities..."
+        
+    if "In memory DB persist to disk" in cleaned:
+        return "Saving graph database to disk..."
+        
+    if "Starting crawl" in cleaned or "crawl" in cleaned.lower():
+        return "Crawling web page content..."
+        
+    # MinerU / parser logs
+    if "Executing mineru command" in cleaned:
+        return "Starting multimodal document processing..."
+    if "DocAnalysis init" in cleaned:
+        return "Preparing document understanding model..."
+    if "Layout Predict" in cleaned:
+        match = re.search(r"Layout Predict:\s*(\d+)%", cleaned)
+        p = match.group(1) if match else ""
+        return f"Understanding document layout {p}%..." if p else "Understanding document layout..."
+    if "MFD Predict" in cleaned:
+        match = re.search(r"MFD Predict:\s*(\d+)%", cleaned)
+        p = match.group(1) if match else ""
+        return f"Reading structured content {p}%..." if p else "Reading structured content..."
+    if "OCR-det ch" in cleaned:
+        match = re.search(r"OCR-det ch:\s*(\d+)%", cleaned)
+        p = match.group(1) if match else ""
+        return f"Locating document text regions {p}%..." if p else "Locating document text regions..."
+    if "OCR-rec Predict" in cleaned:
+        match = re.search(r"OCR-rec Predict:\s*(\d+)%", cleaned)
+        p = match.group(1) if match else ""
+        return f"Reading text and symbols {p}%..." if p else "Reading text and symbols..."
+    if "Processing pages" in cleaned:
+        match = re.search(r"Processing pages:\s*(\d+)%", cleaned)
+        p = match.group(1) if match else ""
+        return f"Assembling structured pages {p}%..." if p else "Assembling structured pages..."
+
+    cleaned = re.sub(r"^[a-zA-Z_][a-zA-Z0-9_\.]+\s*:\s*", "", cleaned)
+    if "FutureWarning" in cleaned or "weights_only" in cleaned or "weights = torch.load" in cleaned:
+        return "Loading deep learning weights..."
+        
+    return cleaned
 
 
 # --- HIGH-FIDELITY MOCK DATABASES ---
-
-# In-memory notebook dashboard. These are presentation cards only; every card
-# uses the same ZeRAG workspace configured on the backend: `default`.
-notebooks_db: Dict[str, Dict[str, Any]] = {}
-
-# Pipeline progressive jobs tracking
-active_jobs_db: Dict[str, Dict[str, Any]] = {}
+# Mock databases are removed and replaced with PostgreSQL and MongoDB persistent storage.
 
 # MOCK DATA: INSURANCE POLICY DOMAIN (Default)
 MOCK_NODES_INSURANCE = [
@@ -887,41 +1111,25 @@ rag_locks: Dict[str, asyncio.Lock] = {}
 # --- WORKSPACE REGISTRATION ---
 # Workspace metadata is persisted in PostgreSQL (`notebook_workspaces`).
 # Document/process state is read from MongoDB doc_status collections.
-# These compatibility functions intentionally do not touch rag_storage JSON files.
-def load_notebooks():
-    notebooks_db.clear()
 
 
-def save_notebooks():
-    return None
-
-
-def load_active_jobs():
-    active_jobs_db.clear()
-
-
-def save_active_jobs():
-    return None
-
-
-def ensure_notebook_exists(
+async def ensure_notebook_exists(
     notebook_id: str, name: Optional[str] = None
 ) -> Dict[str, Any]:
-    if notebook_id not in notebooks_db:
-        if not name:
-            name = notebook_id.replace("notebook_", "").replace("_", " ").title()
-        notebooks_db[notebook_id] = {
+    if notebook_id in ("notebook_insurance_demo", "notebook_resume_demo"):
+        return {
             "id": notebook_id,
-            "name": name,
+            "name": "Insurance Demo" if "insurance" in notebook_id else "Resume Demo",
             "source_count": 0,
-            "status": "ready"
-            if notebook_id in ("notebook_insurance_demo", "notebook_resume_demo")
-            else "empty",
+            "status": "ready",
         }
-        logger.info(
-            f"[WORKSPACE-CACHE] Auto-registered transient notebook cache: {notebook_id}"
+    notebook = await chat_history_db.get_notebook(notebook_id)
+    if not notebook:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Notebook workspace '{notebook_id}' does not exist in PostgreSQL.",
         )
-    return notebooks_db[notebook_id]
+    return notebook
 
 
 def get_notebook_input_dir(notebook_id: str) -> Any:
@@ -1043,128 +1251,13 @@ async def get_rag_instance(notebook_id: str, default_rag: ZeRAG) -> ZeRAG:
 def create_insightnote_routes(
     rag: ZeRAG, doc_manager: DocumentManager, api_key: str = None, multi_rag: Any = None
 ):
-    # Load notebooks database and active jobs from files on startup
-    try:
-        load_notebooks()
-        load_active_jobs()
-    except Exception as e:
-        logger.error(
-            f"[WORKSPACE-INIT] Failed to load persisted notebooks or jobs: {e}"
-        )
+    logger.info("[WORKSPACE-INIT] Initializing database-backed notebooks router.")
 
     router = APIRouter(prefix="/api")
 
     @router.get("/health")
     async def get_health():
         return HealthResponse()
-
-    @router.post("/rerank", response_model=RerankResponse)
-    async def rerank_documents(request: RerankRequest):
-        """Rerank documents dynamically using the specified provider or configured defaults."""
-        try:
-            # 1. Resolve binding
-            binding = request.binding
-            if not binding:
-                if rag.rerank_model_func:
-                    func_name = getattr(rag.rerank_model_func, "__name__", "")
-                    if "cohere" in func_name:
-                        binding = "cohere"
-                    elif "ali" in func_name:
-                        binding = "ali"
-                    else:
-                        binding = "jina"
-                else:
-                    binding = "jina"
-
-            binding = binding.lower()
-
-            # 2. Resolve model and other configurations
-            from config import config
-
-            model = request.model
-            base_url = request.base_url
-            api_key = request.api_key
-
-            if not model:
-                model = config.RERANKER_MODEL
-            if not base_url:
-                base_url = config.RERANKER_BASE_URL
-            if not api_key:
-                api_key = config.RERANKER_API_KEY or config.LLM_API_KEY
-
-            # 3. Call the appropriate reranker function
-            if binding == "jina":
-                from app.core.rerank import jina_rerank
-
-                raw_results = await jina_rerank(
-                    query=request.query,
-                    documents=request.documents,
-                    top_n=request.top_n,
-                    model=model or "jina-reranker-v2-base-multilingual",
-                    base_url=base_url or "https://api.jina.ai/v1/rerank",
-                    api_key=api_key,
-                )
-            elif binding == "cohere":
-                from app.core.rerank import cohere_rerank
-
-                raw_results = await cohere_rerank(
-                    query=request.query,
-                    documents=request.documents,
-                    top_n=request.top_n,
-                    model=model or "rerank-v3.5",
-                    base_url=base_url or "https://api.cohere.com/v2/rerank",
-                    api_key=api_key,
-                )
-            elif binding == "ali":
-                from app.core.rerank import ali_rerank
-
-                raw_results = await ali_rerank(
-                    query=request.query,
-                    documents=request.documents,
-                    top_n=request.top_n,
-                    model=model or "gte-rerank-v2",
-                    base_url=base_url
-                    or "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank",
-                    api_key=api_key,
-                )
-            elif binding in ("google", "vertex", "google_vertex"):
-                from app.core.rerank import google_vertex_rerank
-
-                raw_results = await google_vertex_rerank(
-                    query=request.query,
-                    documents=request.documents,
-                    top_n=request.top_n,
-                    model=model or "semantic-ranker-default-004",
-                    project_id=os.getenv("GCP_PROJECT_ID"),
-                    credentials_json_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
-                )
-            else:
-                raise HTTPException(
-                    status_code=400, detail=f"Unsupported reranker binding: {binding}"
-                )
-
-            # 4. Construct response items
-            results = []
-            for item in raw_results:
-                idx = item["index"]
-                text_content = (
-                    request.documents[idx]
-                    if 0 <= idx < len(request.documents)
-                    else None
-                )
-                results.append(
-                    RerankResultItem(
-                        index=idx,
-                        relevance_score=item["relevance_score"],
-                        text=text_content,
-                    )
-                )
-
-            return RerankResponse(results=results)
-
-        except Exception as e:
-            logger.error(f"Error during reranking endpoint execution: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
 
     # --- MULTI-NOTEBOOK ENDPOINTS ---
 
@@ -1183,9 +1276,6 @@ def create_insightnote_routes(
                 for item in db_items
                 if item["id"] not in ("notebook_resume_demo", "notebook_insurance_demo")
             ]
-            notebooks_db.clear()
-            for item in items:
-                notebooks_db[item.id] = item.dict()
             return items
         except Exception as e:
             logger.error(f"Error listing notebooks: {e}")
@@ -1207,7 +1297,6 @@ def create_insightnote_routes(
             new_nb = await chat_history_db.upsert_notebook(
                 nid, request.name, "empty", 0
             )
-            notebooks_db[nid] = new_nb
             logger.info(f"Notebook created in PostgreSQL: {nid} ({request.name})")
             return NotebookListItem(
                 id=new_nb["id"],
@@ -1225,7 +1314,6 @@ def create_insightnote_routes(
         notebook = await chat_history_db.get_notebook(notebook_id)
         if not notebook:
             raise HTTPException(status_code=404, detail="Notebook workspace not found")
-        notebooks_db[notebook_id] = notebook
         return NotebookListItem(
             id=notebook["id"],
             name=notebook["name"],
@@ -1237,7 +1325,7 @@ def create_insightnote_routes(
     async def delete_notebook(notebook_id: str):
         """Delete a specific notebook workspace and all of its physical database / file configurations."""
         notebook = await chat_history_db.get_notebook(notebook_id)
-        if not notebook and notebook_id not in notebooks_db:
+        if not notebook:
             raise HTTPException(status_code=404, detail="Notebook workspace not found")
 
         logger.info(
@@ -1270,19 +1358,17 @@ def create_insightnote_routes(
                 f"[PHYSICAL-PURGE] Filesystem deletion failed for {notebook_id}: {e}"
             )
 
-        # 3. Purge PostgreSQL workspace, chat sessions and messages
+        # 3. Purge PostgreSQL workspace, chat sessions, active jobs, and messages
         try:
             await chat_history_db.delete_notebook_conversations(notebook_id)
+            await chat_history_db.delete_jobs_for_notebook(notebook_id)
             await chat_history_db.delete_notebook(notebook_id)
         except Exception as e:
             logger.error(
                 f"[PHYSICAL-PURGE] PostgreSQL workspace/chat purge failed for {notebook_id}: {e}"
             )
 
-        # 4. Remove from in-memory cache
-        if notebook_id in notebooks_db:
-            del notebooks_db[notebook_id]
-
+        # 4. Remove from dynamic RAG instances cache
         if notebook_id in rag_instances:
             del rag_instances[notebook_id]
         if notebook_id in rag_locks:
@@ -1305,7 +1391,8 @@ def create_insightnote_routes(
         Reports high-level document processing and workspace save progress.
         Transition is time-based to show an alive, responsive progress bar.
         """
-        if job_id not in active_jobs_db:
+        job = await chat_history_db.get_job(job_id)
+        if not job:
             # Sane default
             return PipelineJobResponse(
                 job_id=job_id,
@@ -1320,11 +1407,10 @@ def create_insightnote_routes(
                 ],
             )
 
-        job = active_jobs_db[job_id]
         elapsed = time.time() - job["created_at"]
         notebook_id = job["notebook_id"]
         if notebook_id:
-            ensure_notebook_exists(notebook_id)
+            await ensure_notebook_exists(notebook_id)
 
         # Resolve isolated notebook RAG
         notebook_rag = rag
@@ -1368,17 +1454,28 @@ def create_insightnote_routes(
         steps = []
         status = "processing"
 
-        step_definitions = [
-            ("load_file", 0.0),
-            ("document_understanding", 1.5),
-            ("vector_graph_sync", 6.0),
-        ]
+        job_metadata = job.get("metadata") or {}
+        source_type = job_metadata.get("source_type")
+        if source_type in {"url", "note", "text"}:
+            step_definitions = [
+                ("load_file", 0.0),
+                ("chunking", 1.5),
+                ("entity_extraction", 5.0),
+                ("vector_graph_sync", 9.0),
+            ]
+        else:
+            step_definitions = [
+                ("load_file", 0.0),
+                ("document_understanding", 1.5),
+                ("vector_graph_sync", 6.0),
+            ]
+        final_step_name = step_definitions[-1][0]
 
         all_done = True
         for name, req_time in step_definitions:
             if elapsed >= req_time + 1.5:
                 # Hold the last step (or subsequent steps) as "processing" if real DB says we aren't done yet
-                if name == "vector_graph_sync" and docs_by_track and not all_done_real:
+                if name == final_step_name and docs_by_track and not all_done_real:
                     steps.append(PipelineStep(name=name, status="processing"))
                     all_done = False
                 else:
@@ -1405,23 +1502,13 @@ def create_insightnote_routes(
                 status = "ready"
                 # If we were holding, force all steps to done
                 steps = [
-                    PipelineStep(name=s, status="done")
-                    for s in [
-                        "load_file",
-                        "document_understanding",
-                        "vector_graph_sync",
-                    ]
+                    PipelineStep(name=s, status="done") for s, _ in step_definitions
                 ]
-                if notebook_id in notebooks_db:
-                    notebooks_db[notebook_id]["status"] = "ready"
-                    notebooks_db[notebook_id]["source_count"] = len(docs_by_track)
                 await chat_history_db.update_notebook_status(
                     notebook_id, status="ready", source_count=len(docs_by_track)
                 )
             elif any_failed_real:
                 status = "failed"
-                if notebook_id in notebooks_db:
-                    notebooks_db[notebook_id]["status"] = "ready"  # let user retry
                 await chat_history_db.update_notebook_status(
                     notebook_id, status="ready"
                 )
@@ -1431,9 +1518,6 @@ def create_insightnote_routes(
             # Fallback to simulated completion if no real docs are registered yet
             if all_done:
                 status = "ready"
-                if notebook_id in notebooks_db:
-                    notebooks_db[notebook_id]["status"] = "ready"
-                    notebooks_db[notebook_id]["source_count"] = 1
                 await chat_history_db.update_notebook_status(
                     notebook_id, status="ready", source_count=1
                 )
@@ -1471,6 +1555,10 @@ def create_insightnote_routes(
                                         "entity_id",
                                         "entity_type",
                                         "description",
+                                        "source_id",
+                                        "doc_id",
+                                        "chunk_id",
+                                        "track_id",
                                     ]
                                 },
                             },
@@ -1530,10 +1618,10 @@ def create_insightnote_routes(
         Specialized loading endpoint for 'example/Resume.pdf'.
         Registers source and triggers progressive indexing.
         """
-        ensure_notebook_exists(notebook_id)
+        await ensure_notebook_exists(notebook_id)
 
         filename = os.path.basename(request.path)
-        job_id = f"job_resume_{generate_track_id('job')[:6]}"
+        job_id = f"job_resume_{generate_track_id('job')}"
         source_id = "src_resume_pdf"
 
         # Copy example file to the input directory of doc_manager
@@ -1563,17 +1651,15 @@ def create_insightnote_routes(
             logger.warning("Could not find example/Resume.pdf in standard paths!")
 
         # Register progressive job in database
-        active_jobs_db[job_id] = {
-            "job_id": job_id,
-            "notebook_id": notebook_id,
-            "filename": filename,
-            "created_at": time.time(),
-            "force_mineru_fallback": False,  # Toggle True to demo MinerU fallback
-        }
-        save_active_jobs()
+        await chat_history_db.create_job(
+            job_id=job_id,
+            notebook_id=notebook_id,
+            filename=filename,
+            force_mineru_fallback=False,
+            metadata={"source_type": "example_pdf"},
+        )
 
         # Transition notebook state to processing
-        notebooks_db[notebook_id]["status"] = "processing"
         await chat_history_db.update_notebook_status(notebook_id, status="processing")
 
         notebook_rag = await get_rag_instance(notebook_id, rag)
@@ -1615,10 +1701,10 @@ def create_insightnote_routes(
         file: UploadFile = File(...),
     ):
         """Upload an actual file to a specific notebook. Mimics load-example using progressive status."""
-        ensure_notebook_exists(notebook_id)
+        await ensure_notebook_exists(notebook_id)
 
-        job_id = f"job_upload_{generate_track_id('job')[:6]}"
-        source_id = f"src_{generate_track_id('src')[:6]}"
+        job_id = f"job_upload_{generate_track_id('job')}"
+        source_id = f"src_{generate_track_id('src')}"
 
         # Save file to input directory
         import aiofiles
@@ -1628,6 +1714,7 @@ def create_insightnote_routes(
         notebook_input_dir = get_notebook_input_dir(notebook_id)
         filename = sanitize_filename(file.filename, notebook_input_dir)
         file_path = notebook_input_dir / filename
+        original_source_type = _source_type_from_filename(filename)
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
         async with aiofiles.open(file_path, "wb") as out_file:
@@ -1637,26 +1724,46 @@ def create_insightnote_routes(
                     break
                 await out_file.write(chunk)
 
-        # Register progressive job
-        active_jobs_db[job_id] = {
-            "job_id": job_id,
-            "notebook_id": notebook_id,
-            "filename": filename,
-            "created_at": time.time(),
-            "force_mineru_fallback": False,
-        }
-        save_active_jobs()
+        try:
+            ingest_file_path = _prepare_ingest_file(file_path, notebook_input_dir)
+        except Exception as convert_err:
+            logger.error(
+                f"[INGEST] Failed to prepare uploaded file {filename}: {convert_err}"
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Failed to prepare {filename} for indexing: {convert_err}. "
+                    "For Office files, ensure LibreOffice/soffice is installed and available on PATH."
+                ),
+            )
 
-        notebooks_db[notebook_id]["status"] = "processing"
+        # Register progressive job in database
+        await chat_history_db.create_job(
+            job_id=job_id,
+            notebook_id=notebook_id,
+            filename=ingest_file_path.name,
+            force_mineru_fallback=False,
+            metadata={
+                "source_type": original_source_type,
+                "original_filename": filename,
+            },
+        )
+
         await chat_history_db.update_notebook_status(notebook_id, status="processing")
 
         notebook_rag = await get_rag_instance(notebook_id, rag)
 
         # Call real multimodal RAG enqueue and process documents
         success, final_track_id = await notebook_rag.apipeline_enqueue_file_reference(
-            str(file_path.absolute()),
+            str(ingest_file_path.absolute()),
             track_id=job_id,
-            metadata={"graph_mode": True, "multi_modal": True},
+            metadata={
+                "graph_mode": True,
+                "multi_modal": True,
+                "original_filename": filename,
+                "original_source_type": original_source_type,
+            },
         )
         background_tasks.add_task(notebook_rag.apipeline_process_enqueue_documents)
         if success:
@@ -1671,7 +1778,7 @@ def create_insightnote_routes(
         return SourceAddResponse(
             source_id=source_id,
             name=filename,
-            type="pdf" if filename.endswith(".pdf") else "text",
+            type=original_source_type,
             status="processing",
             pipeline_job_id=job_id,
         )
@@ -1685,10 +1792,10 @@ def create_insightnote_routes(
         background_tasks: BackgroundTasks,
     ):
         """Add a URL source to a specific notebook. Crawls content and enqueues to real RAG."""
-        ensure_notebook_exists(notebook_id)
+        await ensure_notebook_exists(notebook_id)
 
-        job_id = f"job_url_{generate_track_id('job')[:6]}"
-        source_id = f"src_{generate_track_id('src')[:6]}"
+        job_id = f"job_url_{generate_track_id('job')}"
+        source_id = f"src_{generate_track_id('src')}"
 
         url = request.url.strip()
         if not url.startswith("http://") and not url.startswith("https://"):
@@ -1702,85 +1809,40 @@ def create_insightnote_routes(
         clean_name = re.sub(r"[^A-Za-z0-9_.-]", "_", clean_name).strip("_")
         if not clean_name:
             clean_name = "scraped_webpage"
-        filename = f"{clean_name}.md"
 
         notebook_input_dir = get_notebook_input_dir(notebook_id)
-        file_path = notebook_input_dir / filename
-        file_path.parent.mkdir(parents=True, exist_ok=True)
+        notebook_input_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"{clean_name}.md"
 
         try:
-            logger.info(f"[SCRAPE] Starting crawl for: {url}")
-            # Try Crawl4AI first
-            scraped_content = ""
-            try:
-                from crawl4ai import AsyncWebCrawler
-
-                async with AsyncWebCrawler() as crawler:
-                    crawl_res = await crawler.arun(url=url)
-                    if crawl_res and crawl_res.markdown:
-                        scraped_content = crawl_res.markdown
-            except Exception as crawl_err:
-                logger.warning(
-                    f"Crawl4AI not available or failed: {crawl_err}. Falling back to standard scraper."
-                )
-
-            if not scraped_content:
-                # Regular bs4 scraping fallback
-                import httpx
-                from bs4 import BeautifulSoup
-
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                }
-                async with httpx.AsyncClient(
-                    follow_redirects=True, headers=headers, timeout=15.0
-                ) as client:
-                    resp = await client.get(url)
-                    resp.raise_for_status()
-                    soup = BeautifulSoup(resp.text, "html.parser")
-                    for s in soup(["script", "style", "nav", "header", "footer"]):
-                        s.decompose()
-                    scraped_content = (
-                        f"# {soup.title.string if soup.title else clean_name}\n\nURL: {url}\n\n"
-                        + soup.get_text(separator="\n")
-                    )
-
-            # Clean up content
-            lines = [l.strip() for l in scraped_content.splitlines() if l.strip()]
-            final_text = "\n\n".join(lines)
-
-            # Write to disk
-            import aiofiles
-
-            async with aiofiles.open(file_path, "w", encoding="utf-8") as out:
-                await out.write(final_text)
-
+            final_text = await _scrape_url_to_markdown(url, clean_name)
         except Exception as e:
             logger.error(f"[SCRAPE] Failed scraping url {url}: {e}")
             raise HTTPException(
                 status_code=400, detail=f"Failed to scrape webpage: {str(e)}"
             )
 
-        # Register progressive job
-        active_jobs_db[job_id] = {
-            "job_id": job_id,
-            "notebook_id": notebook_id,
-            "filename": filename,
-            "created_at": time.time(),
-            "force_mineru_fallback": True,  # Standard text/md fallback (extremely fast!)
-        }
-        save_active_jobs()
+        # Register progressive job in database
+        await chat_history_db.create_job(
+            job_id=job_id,
+            notebook_id=notebook_id,
+            filename=filename,
+            force_mineru_fallback=False,
+            metadata={"source_type": "url", "url": url},
+        )
 
-        notebooks_db[notebook_id]["status"] = "processing"
         await chat_history_db.update_notebook_status(notebook_id, status="processing")
 
         notebook_rag = await get_rag_instance(notebook_id, rag)
-        success, final_track_id = await notebook_rag.apipeline_enqueue_file_reference(
-            str(file_path.absolute()),
-            track_id=job_id,
-            metadata={"graph_mode": True, "multi_modal": False, "url": url},
+        background_tasks.add_task(
+            pipeline_index_texts,
+            notebook_rag,
+            [final_text],
+            [url],
+            job_id,
+            True,
+            False,
         )
-        background_tasks.add_task(notebook_rag.apipeline_process_enqueue_documents)
 
         return SourceAddResponse(
             source_id=source_id,
@@ -1799,46 +1861,41 @@ def create_insightnote_routes(
         background_tasks: BackgroundTasks,
     ):
         """Add a rich text note source to a specific notebook. Enqueues to real RAG."""
-        ensure_notebook_exists(notebook_id)
+        await ensure_notebook_exists(notebook_id)
 
-        job_id = f"job_note_{generate_track_id('job')[:6]}"
-        source_id = f"src_{generate_track_id('src')[:6]}"
+        job_id = f"job_note_{generate_track_id('job')}"
+        source_id = f"src_{generate_track_id('src')}"
 
         clean_title = re.sub(r"[^A-Za-z0-9_.-]", "_", request.title.strip()).strip("_")
         if not clean_title:
-            clean_title = f"note_{generate_track_id('note')[:4]}"
-        filename = f"{clean_title}.txt"
+            clean_title = generate_track_id("note")
 
         notebook_input_dir = get_notebook_input_dir(notebook_id)
-        file_path = notebook_input_dir / filename
-        file_path.parent.mkdir(parents=True, exist_ok=True)
+        notebook_input_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"{clean_title}.txt"
+        note_text = f"# {request.title}\n\n{request.content}"
 
-        # Write content to disk
-        import aiofiles
+        # Register progressive job in database
+        await chat_history_db.create_job(
+            job_id=job_id,
+            notebook_id=notebook_id,
+            filename=filename,
+            force_mineru_fallback=False,
+            metadata={"source_type": "note"},
+        )
 
-        async with aiofiles.open(file_path, "w", encoding="utf-8") as out:
-            await out.write(f"# {request.title}\n\n{request.content}")
-
-        # Register progressive job
-        active_jobs_db[job_id] = {
-            "job_id": job_id,
-            "notebook_id": notebook_id,
-            "filename": filename,
-            "created_at": time.time(),
-            "force_mineru_fallback": True,  # Simple text files parse instantly!
-        }
-        save_active_jobs()
-
-        notebooks_db[notebook_id]["status"] = "processing"
         await chat_history_db.update_notebook_status(notebook_id, status="processing")
 
         notebook_rag = await get_rag_instance(notebook_id, rag)
-        success, final_track_id = await notebook_rag.apipeline_enqueue_file_reference(
-            str(file_path.absolute()),
-            track_id=job_id,
-            metadata={"graph_mode": True, "multi_modal": False},
+        background_tasks.add_task(
+            pipeline_index_texts,
+            notebook_rag,
+            [note_text],
+            [filename],
+            job_id,
+            True,
+            False,
         )
-        background_tasks.add_task(notebook_rag.apipeline_process_enqueue_documents)
 
         return SourceAddResponse(
             source_id=source_id,
@@ -1848,17 +1905,185 @@ def create_insightnote_routes(
             pipeline_job_id=job_id,
         )
 
+    async def _stream_text_job_progress(
+        job_id: str,
+        source_id: str,
+        name: str,
+        source_type: str,
+        source_display_type: str,
+    ):
+        import json
+
+        start_payload = {
+            "job_id": job_id,
+            "source_id": source_id,
+            "name": name,
+            "type": source_display_type,
+            "status": "processing",
+            "steps": [{"name": "load_file", "status": "processing"}],
+            "message": (
+                "Opening web source and preparing semantic indexing..."
+                if source_type == "url"
+                else "Saving note and preparing semantic indexing..."
+            ),
+            "percent": 5,
+            "new_node_ids": [],
+            "new_link_ids": [],
+        }
+        yield f"{json.dumps(start_payload)}\n"
+
+        while True:
+            status_model = await get_pipeline_job_status(job_id)
+            payload = status_model.dict()
+            payload.update(
+                {
+                    "source_id": source_id,
+                    "name": name,
+                    "type": source_display_type,
+                    "percent": max(
+                        payload.get("progress_percentage") or 0,
+                        100 if payload.get("status") == "ready" else 10,
+                    ),
+                }
+            )
+            latest = payload.get("latest_message") or ""
+            if latest:
+                payload["message"] = _humanize_pipeline_message(latest, source_type)
+            elif payload.get("status") == "ready":
+                payload["message"] = "Knowledge graph sync complete."
+            elif source_type == "url":
+                payload["message"] = "Indexing web source into graph memory..."
+            else:
+                payload["message"] = "Indexing note into graph memory..."
+
+            if payload.get("status") == "ready":
+                try:
+                    notebook_id = (await chat_history_db.get_job(job_id)).get(
+                        "notebook_id"
+                    )
+                    notebook_rag = await get_rag_instance(notebook_id, rag)
+                    graph = getattr(notebook_rag, "chunk_entity_relation_graph", None)
+                    if graph is not None:
+                        real_nodes = await graph.get_all_nodes()
+                        real_edges = await graph.get_all_edges()
+                        payload["new_node_ids"] = [
+                            str(node.get("entity_id") or node.get("id"))
+                            for node in (real_nodes or [])[-35:]
+                            if node.get("entity_id") or node.get("id")
+                        ]
+                        payload["new_link_ids"] = [
+                            f"{edge.get('source') or edge.get('src_id')}->{edge.get('target') or edge.get('tgt_id')}"
+                            for edge in (real_edges or [])[-60:]
+                        ]
+                        payload["graph_changed"] = bool(payload["new_node_ids"])
+                except Exception as graph_err:
+                    logger.debug(f"Text stream graph focus skipped: {graph_err}")
+
+            yield f"{json.dumps(payload)}\n"
+            if payload.get("status") in {"ready", "failed"}:
+                break
+            await asyncio.sleep(2.5)
+
+    @router.post("/notebooks/{notebook_id}/sources/url/stream")
+    async def add_notebook_url_stream(notebook_id: str, request: URLAddRequest):
+        from fastapi.responses import StreamingResponse
+
+        async def generator():
+            import json
+
+            await ensure_notebook_exists(notebook_id)
+            job_id = f"job_url_{generate_track_id('job')}"
+            source_id = f"src_{generate_track_id('src')}"
+            url = str(request.url)
+            clean_name = re.sub(r"https?://", "", url).replace("/", "_")[:80]
+            clean_name = re.sub(r"[^A-Za-z0-9_.-]", "_", clean_name).strip("_")
+            if not clean_name:
+                clean_name = generate_track_id("url")
+            filename = f"{clean_name}.md"
+
+            try:
+                yield f"{json.dumps({'job_id': job_id, 'source_id': source_id, 'name': url, 'type': 'url', 'status': 'processing', 'steps': [{'name': 'load_file', 'status': 'processing'}], 'message': 'Crawling web source and extracting readable content...', 'percent': 5})}\n"
+                final_text = await _scrape_url_to_markdown(url, clean_name)
+            except Exception as exc:
+                logger.error(f"[SCRAPE] Failed scraping url {url}: {exc}")
+                yield f"{json.dumps({'job_id': job_id, 'source_id': source_id, 'name': url, 'type': 'url', 'status': 'failed', 'steps': [{'name': 'load_file', 'status': 'failed_fallback_used'}], 'message': f'Failed to scrape webpage: {exc}', 'percent': 100, 'error': str(exc)})}\n"
+                return
+
+            await chat_history_db.create_job(
+                job_id=job_id,
+                notebook_id=notebook_id,
+                filename=filename,
+                force_mineru_fallback=False,
+                metadata={"source_type": "url", "url": url},
+            )
+            await chat_history_db.update_notebook_status(
+                notebook_id, status="processing"
+            )
+            notebook_rag = await get_rag_instance(notebook_id, rag)
+            asyncio.create_task(
+                pipeline_index_texts(
+                    notebook_rag, [final_text], [url], job_id, True, False
+                )
+            )
+            async for payload in _stream_text_job_progress(
+                job_id, source_id, url, "url", "url"
+            ):
+                yield payload
+
+        return StreamingResponse(
+            generator(),
+            media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @router.post("/notebooks/{notebook_id}/sources/note/stream")
+    async def add_notebook_note_stream(notebook_id: str, request: NoteAddRequest):
+        from fastapi.responses import StreamingResponse
+
+        async def generator():
+            await ensure_notebook_exists(notebook_id)
+            job_id = f"job_note_{generate_track_id('job')}"
+            source_id = f"src_{generate_track_id('src')}"
+            clean_title = re.sub(r"[^A-Za-z0-9_.-]", "_", request.title.strip()).strip(
+                "_"
+            )
+            if not clean_title:
+                clean_title = generate_track_id("note")
+            filename = f"{clean_title}.txt"
+            note_text = f"# {request.title}\n\n{request.content}"
+
+            await chat_history_db.create_job(
+                job_id=job_id,
+                notebook_id=notebook_id,
+                filename=filename,
+                force_mineru_fallback=False,
+                metadata={"source_type": "note"},
+            )
+            await chat_history_db.update_notebook_status(
+                notebook_id, status="processing"
+            )
+            notebook_rag = await get_rag_instance(notebook_id, rag)
+            asyncio.create_task(
+                pipeline_index_texts(
+                    notebook_rag, [note_text], [filename], job_id, True, False
+                )
+            )
+            async for payload in _stream_text_job_progress(
+                job_id, source_id, request.title, "note", "text"
+            ):
+                yield payload
+
+        return StreamingResponse(
+            generator(),
+            media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     @router.get("/notebooks/{notebook_id}/sources", response_model=List[SourceListItem])
     async def list_notebook_sources(notebook_id: str):
         """List ingested sources under a notebook."""
-        ensure_notebook_exists(notebook_id)
-
-        nb = notebooks_db[notebook_id]
+        nb = await ensure_notebook_exists(notebook_id)
         sources = []
-
-        # If notebook is empty, return empty list
-        if nb["status"] == "empty":
-            return []
 
         # Fetch real document statuses from MongoDB status storage
         try:
@@ -1888,7 +2113,10 @@ def create_insightnote_routes(
                     status_str = "ready"
 
                 file_path = getattr(doc, "file_path", None) or ""
-                file_basename = os.path.basename(file_path)
+                is_url_source = file_path.startswith(("http://", "https://"))
+                file_basename = (
+                    os.path.basename(file_path) if not is_url_source else file_path
+                )
                 entity_count = 0
                 if graph_nodes and file_path:
                     for node in graph_nodes or []:
@@ -1914,26 +2142,46 @@ def create_insightnote_routes(
                 if hasattr(doc, "chunks_count") and doc.chunks_count is not None:
                     chunk_count = doc.chunks_count
 
+                track_id = getattr(doc, "track_id", None)
+                if not isinstance(track_id, str):
+                    track_id = None
+
                 sources.append(
                     SourceListItem(
                         id=doc_id,
-                        name=os.path.basename(doc.file_path)
-                        if doc.file_path
-                        else "Custom Note",
-                        type="pdf"
-                        if (doc.file_path and doc.file_path.lower().endswith(".pdf"))
-                        else "text",
+                        name=file_path
+                        if is_url_source
+                        else (
+                            os.path.basename(file_path) if file_path else "Custom Note"
+                        ),
+                        type="url"
+                        if is_url_source
+                        else (
+                            "pdf"
+                            if (file_path and file_path.lower().endswith(".pdf"))
+                            else "text"
+                        ),
                         status=status_str,
                         entity_count=entity_count,
                         chunk_count=chunk_count,
+                        pipeline_job_id=track_id,
                     )
                 )
         except Exception as e:
             logger.error(f"Error fetching real documents for sources: {e}")
 
-        # Fallback to legacy mock sources if no real documents found
+        if sources:
+            await chat_history_db.update_notebook_status(
+                notebook_id,
+                status="ready"
+                if any(src.status == "ready" for src in sources)
+                else "processing",
+                source_count=len(sources),
+            )
+
+        # Fallback to legacy mock sources only for built-in demo notebooks.
         if not sources:
-            if "resume" in notebook_id or "resume" in nb["name"].lower():
+            if notebook_id == "notebook_resume_demo":
                 sources.append(
                     SourceListItem(
                         id="src_resume_pdf",
@@ -1944,7 +2192,7 @@ def create_insightnote_routes(
                         chunk_count=25,
                     )
                 )
-            else:
+            elif notebook_id == "notebook_insurance_demo":
                 sources.append(
                     SourceListItem(
                         id="src_001",
@@ -1960,18 +2208,15 @@ def create_insightnote_routes(
     @router.delete("/notebooks/{notebook_id}/sources/{source_id}")
     async def delete_notebook_source(notebook_id: str, source_id: str):
         """Delete a single ingested source document from a notebook."""
-        ensure_notebook_exists(notebook_id)
+        nb = await ensure_notebook_exists(notebook_id)
 
-        # Update metadata in the mock store
-        nb = notebooks_db[notebook_id]
-        if nb["source_count"] > 0:
-            nb["source_count"] -= 1
-            if nb["source_count"] == 0:
-                nb["status"] = "empty"
+        # Update metadata
+        new_source_count = max(0, (nb.get("source_count") or 0) - 1)
+        new_status = "empty" if new_source_count == 0 else "ready"
         await chat_history_db.update_notebook_status(
             notebook_id,
-            status=nb["status"],
-            source_count=nb["source_count"],
+            status=new_status,
+            source_count=new_source_count,
         )
 
         logger.info(f"Source deleted: {source_id} from notebook {notebook_id}")
@@ -2027,9 +2272,7 @@ def create_insightnote_routes(
         """
         Fetches knowledge graph nodes and links for a specific notebook.
         """
-        ensure_notebook_exists(notebook_id)
-
-        nb = notebooks_db[notebook_id]
+        nb = await ensure_notebook_exists(notebook_id)
         if nb["status"] == "empty":
             return GraphResponse(nodes=[], links=[])
 
@@ -2116,9 +2359,7 @@ def create_insightnote_routes(
     )
     async def get_notebook_node_details(notebook_id: str, node_id: str):
         """Get properties of a specific node under a notebook."""
-        ensure_notebook_exists(notebook_id)
-
-        nb = notebooks_db[notebook_id]
+        nb = await ensure_notebook_exists(notebook_id)
 
         # Try fetching real node details from Neo4j
         try:
@@ -2147,7 +2388,16 @@ def create_insightnote_routes(
                             **{
                                 k: v
                                 for k, v in node_dict.items()
-                                if k not in ["entity_id", "entity_type", "description"]
+                                if k
+                                not in [
+                                    "entity_id",
+                                    "entity_type",
+                                    "description",
+                                    "source_id",
+                                    "doc_id",
+                                    "chunk_id",
+                                    "track_id",
+                                ]
                             },
                         },
                     )
@@ -2186,9 +2436,7 @@ def create_insightnote_routes(
     )
     async def get_notebook_node_neighbors(notebook_id: str, node_id: str):
         """Expand neighboring links for a specific node under a notebook."""
-        ensure_notebook_exists(notebook_id)
-
-        nb = notebooks_db[notebook_id]
+        nb = await ensure_notebook_exists(notebook_id)
         is_resume = "resume" in notebook_id or "resume" in nb["name"].lower()
         nodes_universe = MOCK_NODES_RESUME if is_resume else MOCK_NODES_INSURANCE
         links_universe = MOCK_LINKS_RESUME if is_resume else MOCK_LINKS_INSURANCE
@@ -2221,7 +2469,7 @@ def create_insightnote_routes(
         Formats messages to match the exact frontend expectations.
         """
         try:
-            ensure_notebook_exists(notebook_id)
+            await ensure_notebook_exists(notebook_id)
 
             # Get the most recent conversation for this notebook
             conversations = await chat_history_db.get_conversations(notebook_id)
@@ -2261,9 +2509,7 @@ def create_insightnote_routes(
         Chat over notebook workspace. Intercepts resume questions if
         Resume notebook is active, else routes to insurance questions.
         """
-        ensure_notebook_exists(notebook_id)
-
-        nb = notebooks_db[notebook_id]
+        nb = await ensure_notebook_exists(notebook_id)
 
         # Support both 'message' and 'user_prompt' parameters for maximum frontend compatibility
         prompt_message = request.user_prompt or request.message
@@ -2502,6 +2748,7 @@ def create_insightnote_routes(
                 param = QueryParam(
                     mode=query_mode,
                     conversation_history=postgres_history,
+                    enable_rerank=request.rerank,
                 )
                 if request.stream:
                     param.stream = True
@@ -2587,6 +2834,10 @@ def create_insightnote_routes(
                 for ent in retrieved_entities:
                     name = ent.get("entity_name")
                     if name:
+                        clean_filename = ""
+                        raw_path = ent.get("file_path") or ent.get("source_id") or ""
+                        if raw_path and not raw_path.startswith("doc-"):
+                            clean_filename = os.path.basename(raw_path)
                         nodes_metadata.append(
                             {
                                 "id": name,
@@ -2594,8 +2845,7 @@ def create_insightnote_routes(
                                 "type": ent.get("entity_type") or "Concept",
                                 "properties": {
                                     "description": ent.get("description") or "",
-                                    "source_id": ent.get("source_id") or "",
-                                    "file_path": ent.get("file_path") or "",
+                                    "file_name": clean_filename,
                                 },
                             }
                         )
@@ -2615,7 +2865,6 @@ def create_insightnote_routes(
                                 "label": rel.get("description") or "RELATED_TO",
                                 "properties": {
                                     "weight": rel.get("weight") or 1.0,
-                                    "source_id": rel.get("source_id") or "",
                                 },
                             }
                         )
@@ -2630,15 +2879,16 @@ def create_insightnote_routes(
                 if request.stream:
 
                     async def real_rag_event_generator():
-                        # 1. Send metadata
+                        # 1. Send reasoning metadata early, but hold citation cards until
+                        # the final answer is known so we can keep only cited sources.
                         metadata_payload = {
                             "type": "metadata",
-                            "citations": [c.dict() for c in citations],
+                            "citations": [],
                             "retrieval_steps": retrieval_steps,
                             "graph_path": graph_path.dict(),
                             "nodes_metadata": nodes_metadata,
                             "links_metadata": links_metadata,
-                            "suggested_questions": suggested_questions,
+                            "suggested_questions": [],
                         }
                         yield f"data: {json.dumps(metadata_payload)}\n\n"
                         await asyncio.sleep(0.01)
@@ -2674,6 +2924,27 @@ def create_insightnote_routes(
                         if not full_answer:
                             full_answer = "No relevant context found."
 
+                        final_citations = _filter_citations_to_answer(
+                            full_answer, citations
+                        )
+                        final_suggested_questions = build_suggested_questions(
+                            prompt_message,
+                            node_ids,
+                            final_citations,
+                            is_resume,
+                            is_insurance,
+                        )
+                        final_metadata_payload = {
+                            "type": "metadata",
+                            "citations": [c.dict() for c in final_citations],
+                            "retrieval_steps": retrieval_steps,
+                            "graph_path": graph_path.dict(),
+                            "nodes_metadata": nodes_metadata,
+                            "links_metadata": links_metadata,
+                            "suggested_questions": final_suggested_questions,
+                        }
+                        yield f"data: {json.dumps(final_metadata_payload)}\n\n"
+
                         # 3. Store in DB
                         if active_conversation_id:
                             try:
@@ -2682,12 +2953,14 @@ def create_insightnote_routes(
                                     role="assistant",
                                     content=full_answer,
                                     metadata={
-                                        "citations": [c.dict() for c in citations],
+                                        "citations": [
+                                            c.dict() for c in final_citations
+                                        ],
                                         "retrieval_steps": retrieval_steps,
                                         "graph_path": graph_path.dict(),
                                         "nodes_metadata": nodes_metadata,
                                         "links_metadata": links_metadata,
-                                        "suggested_questions": suggested_questions,
+                                        "suggested_questions": final_suggested_questions,
                                     },
                                 )
                             except Exception as ex:
@@ -2705,6 +2978,10 @@ def create_insightnote_routes(
                 answer = result.get("llm_response", {}).get("content", "")
                 if not answer:
                     answer = "No relevant context found."
+                citations = _filter_citations_to_answer(answer, citations)
+                suggested_questions = build_suggested_questions(
+                    prompt_message, node_ids, citations, is_resume, is_insurance
+                )
 
                 logger.info("[LLM] answer generation completed")
 
@@ -2908,7 +3185,7 @@ def create_insightnote_routes(
     async def add_source_legacy(
         request: SourceAddRequest, background_tasks: BackgroundTasks = None
     ):
-        source_id = f"src_{generate_track_id('src')[:6]}"
+        source_id = f"src_{generate_track_id('src')}"
         return SourceAddResponse(
             source_id=source_id,
             name=request.value[:20] if request.type == "text" else request.value,

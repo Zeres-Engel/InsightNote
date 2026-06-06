@@ -187,6 +187,91 @@ def test_upload_file_stream(client, mock_rag):
     ]
 
 
+def test_notebook_note_source_converts_and_enqueues(client, mock_rag, monkeypatch):
+    """Notebook note route should index text directly without multimodal file parsing."""
+    from unittest.mock import AsyncMock
+
+    import app.api.routers.insightnote_routes as routes
+
+    async def fake_get_rag_instance(notebook_id, default_rag):
+        return mock_rag
+
+    monkeypatch.setattr(routes, "get_rag_instance", fake_get_rag_instance)
+    mock_pipeline_index_texts = AsyncMock()
+    monkeypatch.setattr(routes, "pipeline_index_texts", mock_pipeline_index_texts)
+    monkeypatch.setattr(routes.chat_history_db, "create_job", AsyncMock())
+    monkeypatch.setattr(routes.chat_history_db, "update_notebook_status", AsyncMock())
+
+    response = client.post(
+        "/api/notebooks/notebook_fun/sources/note",
+        json={"title": "Key facts / summary", "content": "A concise note."},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["type"] == "text"
+    assert data["status"] == "processing"
+    assert data["pipeline_job_id"].startswith("job_note_")
+    mock_pipeline_index_texts.assert_awaited_once()
+    _, args, _ = mock_pipeline_index_texts.mock_calls[0]
+    assert args[1] == ["# Key facts / summary\n\nA concise note."]
+    assert args[4] is True
+    assert args[5] is False
+
+
+def test_notebook_url_source_crawls_and_indexes_text(client, mock_rag, monkeypatch):
+    """Notebook URL route should crawl markdown and index text directly."""
+    import sys
+    import types
+    from unittest.mock import AsyncMock
+
+    import app.api.routers.insightnote_routes as routes
+
+    class FakeCrawlResult:
+        markdown = "# Crawled page\n\nUseful facts."
+
+    class FakeCrawler:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def arun(self, url):
+            return FakeCrawlResult()
+
+    fake_crawl4ai = types.SimpleNamespace(AsyncWebCrawler=FakeCrawler)
+    monkeypatch.setitem(sys.modules, "crawl4ai", fake_crawl4ai)
+    monkeypatch.setenv("INSIGHTNOTE_USE_CRAWL4AI", "1")
+    monkeypatch.setattr(routes.platform, "system", lambda: "Linux")
+
+    async def fake_get_rag_instance(notebook_id, default_rag):
+        return mock_rag
+
+    monkeypatch.setattr(routes, "get_rag_instance", fake_get_rag_instance)
+    mock_pipeline_index_texts = AsyncMock()
+    monkeypatch.setattr(routes, "pipeline_index_texts", mock_pipeline_index_texts)
+    monkeypatch.setattr(routes.chat_history_db, "create_job", AsyncMock())
+    monkeypatch.setattr(routes.chat_history_db, "update_notebook_status", AsyncMock())
+
+    response = client.post(
+        "/api/notebooks/notebook_fun/sources/url",
+        json={"url": "example.com/test?a=1"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["type"] == "url"
+    assert data["status"] == "processing"
+    assert data["pipeline_job_id"].startswith("job_url_")
+    mock_pipeline_index_texts.assert_awaited_once()
+    _, args, _ = mock_pipeline_index_texts.mock_calls[0]
+    assert args[1] == ["# Crawled page\n\nUseful facts."]
+    assert args[2] == ["https://example.com/test?a=1"]
+    assert args[4] is True
+    assert args[5] is False
+
+
 def test_chat_query_mode_fallback_when_graph_offline(client, mock_rag, caplog):
     """Test that query mode falls back to naive when graph is not ready."""
     import logging
@@ -228,3 +313,135 @@ def test_chat_query_mode_fallback_when_graph_offline(client, mock_rag, caplog):
         for msg in warning_msgs
     )
     assert fallback_warning_exists
+
+
+def test_get_node_details_security_filter(client, mock_rag, monkeypatch):
+    """Test that get_notebook_node_details strips source_id, doc_id, chunk_id, track_id."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    import app.api.routers.insightnote_routes as routes
+
+    monkeypatch.setattr(
+        routes,
+        "ensure_notebook_exists",
+        AsyncMock(return_value={"id": "notebook_test", "name": "Test Notebook"}),
+    )
+    monkeypatch.setattr(routes, "get_rag_instance", AsyncMock(return_value=mock_rag))
+
+    mock_session = AsyncMock()
+    mock_run_result = AsyncMock()
+
+    fake_node_data = {
+        "entity_id": "test_node_id",
+        "entity_type": "Concept",
+        "description": "A node for unit testing.",
+        "source_id": "doc-12345",
+        "doc_id": "doc-abcde",
+        "chunk_id": "chunk-9999",
+        "track_id": "track-5555",
+        "custom_public_prop": "visible_value",
+    }
+
+    mock_run_result.single = AsyncMock(return_value={"n": fake_node_data})
+    mock_session.run = AsyncMock(return_value=mock_run_result)
+
+    mock_driver = MagicMock()
+    mock_driver.session.return_value.__aenter__.return_value = mock_session
+    mock_rag.chunk_entity_relation_graph._driver = mock_driver
+    mock_rag.chunk_entity_relation_graph._DATABASE = "neo4j"
+    mock_rag.chunk_entity_relation_graph._get_workspace_label = MagicMock(
+        return_value="test_label"
+    )
+
+    response = client.get("/api/notebooks/notebook_test/graph/node/test_node_id")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["id"] == "test_node_id"
+    assert data["type"] == "Concept"
+    assert data["properties"]["description"] == "A node for unit testing."
+    assert data["properties"]["custom_public_prop"] == "visible_value"
+
+    for sensitive_key in [
+        "source_id",
+        "doc_id",
+        "chunk_id",
+        "track_id",
+        "entity_id",
+        "entity_type",
+    ]:
+        assert sensitive_key not in data["properties"]
+
+
+def test_ask_notebook_chat_metadata_security_filter(client, mock_rag, monkeypatch):
+    """Test that ask_notebook_chat strips source_id and sanitizes absolute file_path."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    import app.api.routers.insightnote_routes as routes
+
+    monkeypatch.setattr(
+        routes,
+        "ensure_notebook_exists",
+        AsyncMock(return_value={"id": "notebook_test", "name": "Test Notebook"}),
+    )
+    monkeypatch.setattr(routes, "get_rag_instance", AsyncMock(return_value=mock_rag))
+
+    dummy_doc = MagicMock()
+    dummy_doc.file_path = "policy.pdf"
+    mock_rag.doc_status.get_docs_paginated.return_value = (
+        [("doc_123", dummy_doc)],
+        1,
+    )
+    mock_rag.graph_ready = True
+
+    mock_rag.aquery_llm.return_value = {
+        "status": "success",
+        "message": "Query executed",
+        "llm_response": {"content": "Answer content"},
+        "data": {
+            "entities": [
+                {
+                    "entity_name": "Nguyen Phuoc Thanh",
+                    "entity_type": "Person",
+                    "description": "Developer",
+                    "source_id": "doc-00123",
+                    "file_path": "C:\\Users\\admin\\Desktop\\Resume.pdf",
+                }
+            ],
+            "relationships": [
+                {
+                    "src_id": "A",
+                    "tgt_id": "B",
+                    "description": "friends",
+                    "weight": 0.95,
+                    "source_id": "doc-00456",
+                }
+            ],
+            "chunks": [],
+            "references": [],
+        },
+        "metadata": {"keywords": {"high_level": [], "low_level": []}},
+    }
+
+    payload = {
+        "workspace_id": "notebook_test",
+        "message": "Tell me about Nguyen Phuoc Thanh.",
+        "mode": "mix",
+    }
+
+    response = client.post("/api/notebooks/notebook_test/chat", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+
+    assert len(data["nodes_metadata"]) == 1
+    node_meta = data["nodes_metadata"][0]
+    assert node_meta["id"] == "Nguyen Phuoc Thanh"
+
+    assert "source_id" not in node_meta["properties"]
+    assert "file_path" not in node_meta["properties"]
+    assert node_meta["properties"]["file_name"] == "Resume.pdf"
+
+    assert len(data["links_metadata"]) == 1
+    link_meta = data["links_metadata"][0]
+    assert link_meta["source"] == "A"
+    assert "source_id" not in link_meta["properties"]

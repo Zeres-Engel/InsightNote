@@ -1889,13 +1889,14 @@ class ZeRAG:
         self,
         split_by_character: str | None = None,
         split_by_character_only: bool = False,
+        include_failed: bool = False,
     ) -> None:
         """
         Process pending documents by splitting them into chunks, processing
         each chunk for entity and relation extraction, and updating the
         document status.
 
-        1. Get all pending, failed, and abnormally terminated processing documents.
+        1. Get all pending and abnormally terminated processing documents.
         2. Validate document data consistency and fix any issues
         3. Split document content into chunks
         4. Process each chunk for entity and relation extraction
@@ -1922,7 +1923,8 @@ class ZeRAG:
 
                 to_process_docs: dict[str, DocProcessingStatus] = {}
                 to_process_docs.update(processing_docs)
-                to_process_docs.update(failed_docs)
+                if include_failed:
+                    to_process_docs.update(failed_docs)
                 to_process_docs.update(pending_docs)
 
                 if not to_process_docs:
@@ -2703,7 +2705,8 @@ class ZeRAG:
 
                 to_process_docs = {}
                 to_process_docs.update(processing_docs)
-                to_process_docs.update(failed_docs)
+                if include_failed:
+                    to_process_docs.update(failed_docs)
                 to_process_docs.update(pending_docs)
 
         finally:

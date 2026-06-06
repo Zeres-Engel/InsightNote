@@ -46,7 +46,10 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
   const [urlInput, setUrlInput] = useState("");
   const [textInput, setTextInput] = useState("");
   const [noteTitle, setNoteTitle] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [urlSubmitting, setUrlSubmitting] = useState(false);
+  const [textSubmitting, setTextSubmitting] = useState(false);
+  const [fileSubmitting, setFileSubmitting] = useState(false);
+  const [exampleSubmitting, setExampleSubmitting] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [expandedJobs, setExpandedJobs] = useState<Record<string, boolean>>({});
   const stepLabels: Record<string, string> = {
@@ -60,7 +63,7 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
     chunking: "Hierarchical Parent-Child Chunking",
     entity_extraction: "Semantic Entity Extraction",
     relationship_extraction: "Meticulous Relation Mapping",
-    neo4j_write: "Neo4j Knowledge Graph Sync",
+    neo4j_write: "ZeRAG Knowledge Graph Sync",
     vector_index: "Qdrant Dense Vector Indexing",
   };
 
@@ -70,20 +73,20 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
 
   const handleUrlSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!urlInput.trim()) return;
-    setIsSubmitting(true);
+    if (!urlInput.trim() || urlSubmitting) return;
+    setUrlSubmitting(true);
     try {
       await onAddUrl(urlInput.trim());
       setUrlInput("");
     } finally {
-      setIsSubmitting(false);
+      setUrlSubmitting(false);
     }
   };
 
   const handleTextSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!textInput.trim()) return;
-    setIsSubmitting(true);
+    if (!textInput.trim() || textSubmitting) return;
+    setTextSubmitting(true);
     try {
       const content = noteTitle.trim()
         ? `Title: ${noteTitle.trim()}\n\n${textInput.trim()}`
@@ -92,19 +95,19 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
       setTextInput("");
       setNoteTitle("");
     } finally {
-      setIsSubmitting(false);
+      setTextSubmitting(false);
     }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
-      setIsSubmitting(true);
+      setFileSubmitting(true);
       try {
         const filesArray = Array.from(e.target.files);
         // Upload all selected files concurrently
         await Promise.all(filesArray.map((file) => onUploadFile(file)));
       } finally {
-        setIsSubmitting(false);
+        setFileSubmitting(false);
         e.target.value = ""; // Clear file input
       }
     }
@@ -125,23 +128,23 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
     e.stopPropagation();
     setDragActive(false);
     if (e.dataTransfer.files) {
-      setIsSubmitting(true);
+      setFileSubmitting(true);
       try {
         const filesArray = Array.from(e.dataTransfer.files);
         // Upload all dropped files concurrently
         await Promise.all(filesArray.map((file) => onUploadFile(file)));
       } finally {
-        setIsSubmitting(false);
+        setFileSubmitting(false);
       }
     }
   };
 
   const triggerLoadExample = async () => {
-    setIsSubmitting(true);
+    setExampleSubmitting(true);
     try {
       await onLoadExample();
     } finally {
-      setIsSubmitting(false);
+      setExampleSubmitting(false);
     }
   };
 
@@ -230,10 +233,10 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
               <input
                 type="file"
                 id="file-upload"
-                accept=".pdf,.txt"
+                accept=".pdf,.txt,.md,.doc,.docx,.ppt,.pptx,.xls,.xlsx"
                 multiple
                 onChange={handleFileChange}
-                disabled={notebook.status === "processing"}
+                disabled={fileSubmitting}
                 className="hidden"
               />
               <label
@@ -242,7 +245,7 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
               >
                 <UploadCloud className="w-6 h-6 text-slate-500" />
                 <div className="text-[11px] font-semibold text-slate-350">
-                  {isSubmitting ? "Uploading..." : "Upload custom PDF / TXT"}
+                  {fileSubmitting ? "Enqueuing files..." : "Upload PDF / TXT / Office"}
                 </div>
                 <p className="text-[9px] text-slate-500">
                   Click or drag & drop multiple files
@@ -262,18 +265,16 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
                 placeholder="https://example.com/terms"
                 value={urlInput}
                 onChange={(e) => setUrlInput(e.target.value)}
-                disabled={isSubmitting || notebook.status === "processing"}
+                disabled={urlSubmitting}
                 className="w-full bg-slate-950 border border-slate-850 focus:border-emerald-500/80 focus:ring-1 focus:ring-emerald-500/30 rounded-lg pl-8.5 pr-2 py-1.5 text-xs text-slate-200 placeholder-slate-650 outline-none transition"
               />
             </div>
             <button
               type="submit"
-              disabled={
-                isSubmitting || !urlInput || notebook.status === "processing"
-              }
+              disabled={urlSubmitting || !urlInput.trim()}
               className="w-full bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 disabled:opacity-50 disabled:hover:bg-emerald-600 text-slate-950 font-bold text-xs py-2 rounded-lg transition flex items-center justify-center gap-1 shadow-lg shadow-emerald-500/10 cursor-pointer"
             >
-              {isSubmitting ? (
+              {urlSubmitting ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
                 <Plus className="w-3.5 h-3.5" />
@@ -290,7 +291,7 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
               placeholder="Note Title (Optional)"
               value={noteTitle}
               onChange={(e) => setNoteTitle(e.target.value)}
-              disabled={isSubmitting || notebook.status === "processing"}
+              disabled={textSubmitting}
               className="w-full bg-slate-950 border border-slate-850 focus:border-emerald-500/80 focus:ring-1 focus:ring-emerald-500/30 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 placeholder-slate-650 outline-none transition"
             />
             <textarea
@@ -299,17 +300,15 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
               placeholder="Paste raw text details here..."
               value={textInput}
               onChange={(e) => setTextInput(e.target.value)}
-              disabled={isSubmitting || notebook.status === "processing"}
+              disabled={textSubmitting}
               className="w-full bg-slate-950 border border-slate-850 focus:border-emerald-500/80 focus:ring-1 focus:ring-emerald-500/30 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 placeholder-slate-650 outline-none transition resize-none"
             />
             <button
               type="submit"
-              disabled={
-                isSubmitting || !textInput || notebook.status === "processing"
-              }
+              disabled={textSubmitting || !textInput.trim()}
               className="w-full bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 disabled:opacity-50 disabled:hover:bg-emerald-600 text-slate-950 font-bold text-xs py-2 rounded-lg transition flex items-center justify-center gap-1 shadow-lg shadow-emerald-500/10 cursor-pointer"
             >
-              {isSubmitting ? (
+              {textSubmitting ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
                 <Plus className="w-3.5 h-3.5" />
@@ -336,8 +335,20 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
           </div>
         ) : (
           sources.map((src) => {
-            const job = pipelineJobs[src.id];
+            const job = pipelineJobs[src.id] || (src.pipeline_job_id ? pipelineJobs[src.pipeline_job_id] : undefined);
+            const jobTerminal =
+              !!job &&
+              (job.status === "ready" ||
+                job.status === "failed" ||
+                (job.steps.length > 0 &&
+                  job.steps.every(
+                    (step) =>
+                      step.status === "done" ||
+                      step.status === "failed_fallback_used",
+                  )) ||
+                (job.percent ?? job.progress_percentage ?? 0) >= 100);
             const isProcessing =
+              !jobTerminal &&
               src.status !== "ready" &&
               src.status !== "failed" &&
               src.status !== "active";
@@ -347,6 +358,8 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
             let progressPct = 0;
             if (job && job.percent !== undefined) {
               progressPct = job.percent;
+            } else if (job && job.progress_percentage !== undefined) {
+              progressPct = job.progress_percentage;
             } else if (job && job.steps) {
               const doneCount = job.steps.filter(
                 (s) => s.status === "done",
@@ -373,7 +386,7 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
                       <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded uppercase font-bold border border-slate-700/50">
                         {src.type}
                       </span>
-                      {src.status === "ready" || src.status === "active" ? (
+                      {src.status === "ready" || src.status === "active" || jobTerminal ? (
                         <span className="text-[10px] text-emerald-500 flex items-center gap-1 font-semibold">
                           <CheckCircle2 className="w-3 h-3" />
                           Ready
@@ -412,9 +425,9 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
                         style={{ width: `${progressPct}%` }}
                       ></div>
                     </div>
-                    {job && job.message && (
-                      <div className="mt-1 text-[10px] font-bold text-indigo-400/90 truncate animate-pulse">
-                        {job.message}
+                    {job && (job.message || job.latest_message) && (
+                      <div className="mt-1 text-[10px] font-bold text-violet-400/90 truncate animate-pulse">
+                        {job.message || job.latest_message}
                       </div>
                     )}
                     <button
@@ -445,7 +458,7 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
                             <span className="text-emerald-500">✓ Done</span>
                           )}
                           {step.status === "failed_fallback_used" && (
-                            <span className="text-amber-500">⚠ Fallback</span>
+                            <span className="text-rose-500">⚠ Fallback</span>
                           )}
                           {step.status === "processing" && (
                             <span className="text-indigo-400 animate-pulse">

@@ -55,7 +55,6 @@ class PostgresChatHistory:
         try:
             pool = await self.get_pool()
             async with pool.acquire() as conn:
-                # 1. Create notebook_conversations table
                 await conn.execute("""
                     CREATE TABLE IF NOT EXISTS notebook_workspaces (
                         id VARCHAR(80) PRIMARY KEY,
@@ -66,18 +65,24 @@ class PostgresChatHistory:
                         updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                     );
 
+                    CREATE TABLE IF NOT EXISTS active_jobs (
+                        job_id VARCHAR(80) PRIMARY KEY,
+                        notebook_id VARCHAR(80) NOT NULL REFERENCES notebook_workspaces(id) ON DELETE CASCADE,
+                        filename VARCHAR(255) NOT NULL,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        force_mineru_fallback BOOLEAN DEFAULT FALSE,
+                        metadata JSONB DEFAULT '{}'
+                    );
+
                     CREATE TABLE IF NOT EXISTS notebook_conversations (
                         id VARCHAR(50) PRIMARY KEY,
-                        notebook_id VARCHAR(50) NOT NULL,
+                        notebook_id VARCHAR(50) NOT NULL REFERENCES notebook_workspaces(id) ON DELETE CASCADE,
                         title VARCHAR(255) DEFAULT 'New Conversation',
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                     );
                     CREATE INDEX IF NOT EXISTS idx_conversations_notebook_id ON notebook_conversations(notebook_id);
-                """)
 
-                # 2. Create conversation_messages table
-                await conn.execute("""
                     CREATE TABLE IF NOT EXISTS conversation_messages (
                         id SERIAL PRIMARY KEY,
                         conversation_id VARCHAR(50) REFERENCES notebook_conversations(id) ON DELETE CASCADE,
@@ -107,7 +112,7 @@ class PostgresChatHistory:
             self._initialized = False
             logger.info("PostgreSQL chat history database pool closed.")
 
-    # --- CRUD operations for conversations ---
+    # --- CRUD operations for notebooks ---
 
     async def upsert_notebook(
         self,
@@ -201,6 +206,8 @@ class PostgresChatHistory:
             )
             return "DELETE 1" in status
 
+    # --- CRUD operations for conversations ---
+
     async def create_conversation(
         self, notebook_id: str, conversation_id: str, title: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -254,7 +261,6 @@ class PostgresChatHistory:
             status = await conn.execute(
                 "DELETE FROM notebook_conversations WHERE id = $1", conversation_id
             )
-            # e.g. "DELETE 1" or "DELETE 0"
             return "DELETE 1" in status
 
     async def delete_notebook_conversations(self, notebook_id: str) -> bool:
@@ -304,7 +310,6 @@ class PostgresChatHistory:
 
         metadata_json = json.dumps(metadata or {})
         async with pool.acquire() as conn:
-            # Insert message
             row = await conn.fetchrow(
                 """
                 INSERT INTO conversation_messages (conversation_id, role, content, metadata)
@@ -317,14 +322,12 @@ class PostgresChatHistory:
                 metadata_json,
             )
 
-            # Update parent conversation's updated_at timestamp
             await conn.execute(
                 "UPDATE notebook_conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = $1",
                 conversation_id,
             )
 
             result = dict(row)
-            # Parse JSON string back to dict
             if isinstance(result.get("metadata"), str):
                 result["metadata"] = json.loads(result["metadata"])
             return result
@@ -367,6 +370,81 @@ class PostgresChatHistory:
         except Exception as e:
             logger.warning(f"Error reading conversation history for LLM context: {e}")
             return []
+
+    # --- CRUD operations for active jobs ---
+
+    async def create_job(
+        self,
+        job_id: str,
+        notebook_id: str,
+        filename: str,
+        force_mineru_fallback: bool = False,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        await self.initialize()
+        pool = await self.get_pool()
+        meta_json = json.dumps(metadata or {})
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO active_jobs (job_id, notebook_id, filename, force_mineru_fallback, metadata)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (job_id) DO UPDATE
+                SET notebook_id = EXCLUDED.notebook_id,
+                    filename = EXCLUDED.filename,
+                    force_mineru_fallback = EXCLUDED.force_mineru_fallback,
+                    metadata = EXCLUDED.metadata,
+                    created_at = CURRENT_TIMESTAMP
+                RETURNING job_id, notebook_id, filename, force_mineru_fallback, metadata, created_at
+                """,
+                job_id,
+                notebook_id,
+                filename,
+                force_mineru_fallback,
+                meta_json,
+            )
+            item = dict(row)
+            if isinstance(item.get("metadata"), str):
+                item["metadata"] = json.loads(item["metadata"])
+            return item
+
+    async def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        await self.initialize()
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT job_id, notebook_id, filename, force_mineru_fallback, metadata, EXTRACT(EPOCH FROM created_at) AS created_at_epoch
+                FROM active_jobs
+                WHERE job_id = $1
+                """,
+                job_id,
+            )
+            if not row:
+                return None
+            item = dict(row)
+            item["created_at"] = float(item.pop("created_at_epoch"))
+            if isinstance(item.get("metadata"), str):
+                item["metadata"] = json.loads(item["metadata"])
+            return item
+
+    async def delete_job(self, job_id: str) -> bool:
+        await self.initialize()
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM active_jobs WHERE job_id = $1", job_id
+            )
+            return "DELETE 1" in result
+
+    async def delete_jobs_for_notebook(self, notebook_id: str) -> bool:
+        await self.initialize()
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM active_jobs WHERE notebook_id = $1", notebook_id
+            )
+            return "DELETE" in result
 
 
 # Instantiate global singleton

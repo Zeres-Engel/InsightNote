@@ -247,7 +247,7 @@ export const PRESET_QA: Record<string, ChatResponse> = {
     },
   },
   "show me the reasoning path in the graph.": {
-    answer: "The reasoning path starting from your Policy goes to Coverage, then to Vehicle Accident, and finally to the Motorcycle Accident node. This connects the high-level contract document down to the specific vehicle rules, and is highlighted in orange on the 3D graph visualization.",
+    answer: "The reasoning path starting from your Policy goes to Coverage, then to Vehicle Accident, and finally to the Motorcycle Accident node. This connects the high-level contract document down to the specific vehicle rules, and is highlighted on the 3D graph visualization.",
     citations: [
       {
         source_id: "src_001",

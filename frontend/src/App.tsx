@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { SourcesPanel } from "./components/sources/SourcesPanel";
 import { ChatPanel } from "./components/chat/ChatPanel";
 import { KnowledgeGraphPanel } from "./components/graph/KnowledgeGraphPanel";
@@ -40,6 +40,8 @@ export default function App() {
     nodes: [],
     links: [],
   });
+  const graphDataRef = useRef<GraphResponse>({ nodes: [], links: [] });
+  const sourcesRef = useRef<SourceListItem[]>([]);
   const [highlightPath, setHighlightPath] = useState<GraphPath>({
     node_ids: [],
     link_ids: [],
@@ -50,7 +52,7 @@ export default function App() {
   const [pipelineJobs, setPipelineJobs] = useState<
     Record<string, PipelineJobResponse>
   >({});
-  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [activeJobIds, setActiveJobIds] = useState<string[]>([]);
 
   // Responsive Layout States
   const [showSources, setShowSources] = useState(true);
@@ -113,53 +115,179 @@ export default function App() {
     initApp();
   }, []);
 
-  // Poll pipeline job status if one is active
+  const trackPipelineJob = (jobId?: string) => {
+    if (!jobId) return;
+    setActiveJobIds((prev) => (prev.includes(jobId) ? prev : [...prev, jobId]));
+  };
+
   useEffect(() => {
-    if (!activeJobId || !activeNotebook) return;
+    graphDataRef.current = graphData;
+  }, [graphData]);
 
-    const intervalId = setInterval(async () => {
+  useEffect(() => {
+    sourcesRef.current = sources;
+  }, [sources]);
+
+  const isPipelineTerminal = (status: PipelineJobResponse) => {
+    const terminalStatus =
+      status.status === "ready" || status.status === "failed";
+    const terminalSteps =
+      status.steps.length > 0 &&
+      status.steps.every(
+        (step) =>
+          step.status === "done" || step.status === "failed_fallback_used",
+      );
+    const terminalPercent =
+      (status.percent ?? status.progress_percentage ?? 0) >= 100;
+    return terminalStatus || terminalSteps || terminalPercent;
+  };
+
+  // Poll active pipeline jobs. Gallery/graph refresh only happens on terminal state.
+  useEffect(() => {
+    if (activeJobIds.length === 0 || !activeNotebook) return;
+
+    let cancelled = false;
+    const pollActiveJobs = async () => {
       try {
-        const jobStatus = await api.getPipelineStatus(activeJobId);
-
-        // Find the source corresponding to this activeJobId
-        const matchingSrc = sources.find(
-          (s) =>
-            s.id === activeJobId ||
-            s.name.toLowerCase().includes("resume") ||
-            s.id.includes("resume"),
+        const results = await Promise.all(
+          activeJobIds.map(async (jobId) => ({
+            jobId,
+            status: await api.getPipelineStatus(jobId),
+          })),
         );
-        const key = matchingSrc
-          ? matchingSrc.id
-          : activeJobId || "src_resume_pdf";
-        setPipelineJobs((prev) => ({
-          ...prev,
-          [key]: jobStatus,
-        }));
 
-        if (jobStatus.status === "ready" || jobStatus.status === "failed") {
-          setActiveJobId(null);
-          // Refresh sources & graph final state
-          const updatedSources = await api.listSources(activeNotebook.id);
+        let shouldRefreshWorkspace = false;
+        const completedJobIds: string[] = [];
+
+        setPipelineJobs((prev) => {
+          const next = { ...prev };
+          for (const { jobId, status } of results) {
+            const matchingSrc = sourcesRef.current.find(
+              (s) => s.pipeline_job_id === jobId || s.id === jobId,
+            );
+            const key = matchingSrc ? matchingSrc.id : jobId;
+            const normalizedStatus: PipelineJobResponse = isPipelineTerminal(
+              status,
+            )
+              ? {
+                  ...status,
+                  status: status.status === "failed" ? "failed" : "ready",
+                }
+              : status;
+            next[key] = normalizedStatus;
+            next[jobId] = normalizedStatus;
+
+            // Highlight newly enqueued nodes and links in real-time during polling
+            if (status.extracted_nodes && status.extracted_nodes.length > 0) {
+              const previousGraph = graphDataRef.current;
+              const previousNodeIds = new Set(
+                previousGraph.nodes.map((node) => node.id),
+              );
+              const previousLinkIds = new Set(
+                previousGraph.links.map((link) => {
+                  const s =
+                    typeof link.source === "object"
+                      ? (link.source as any).id
+                      : link.source;
+                  const t =
+                    typeof link.target === "object"
+                      ? (link.target as any).id
+                      : link.target;
+                  return `${s}->${t}`;
+                }),
+              );
+
+              const nodeIds = status.extracted_nodes
+                .map((n: any) => n.id)
+                .filter((id: string) => !previousNodeIds.has(id));
+
+              const linkKeyIds = (status.extracted_links || [])
+                .map((l: any) => {
+                  const s =
+                    typeof l.source === "object"
+                      ? (l.source as any).id
+                      : l.source;
+                  const t =
+                    typeof l.target === "object"
+                      ? (l.target as any).id
+                      : l.target;
+                  return `${s}->${t}`;
+                })
+                .filter((keyId: string) => !previousLinkIds.has(keyId));
+
+              if (nodeIds.length > 0 || linkKeyIds.length > 0) {
+                setHighlightPath({
+                  node_ids: nodeIds,
+                  link_ids: linkKeyIds,
+                });
+              }
+            }
+
+            if (isPipelineTerminal(normalizedStatus)) {
+              completedJobIds.push(jobId);
+              shouldRefreshWorkspace = true;
+            }
+          }
+          return next;
+        });
+
+        if (!cancelled && completedJobIds.length > 0) {
+          setActiveJobIds((prev) =>
+            prev.filter((jobId) => !completedJobIds.includes(jobId)),
+          );
+        }
+
+        if (!cancelled && shouldRefreshWorkspace) {
+          const [updatedSources, updatedGraph] = await Promise.all([
+            api.listSources(activeNotebook.id),
+            api.getGraph(activeNotebook.id),
+          ]);
+          const previousGraph = graphDataRef.current;
+          const previousNodeIds = new Set(
+            previousGraph.nodes.map((node) => node.id),
+          );
+          const previousLinkIds = new Set(
+            previousGraph.links.map((link) => link.id),
+          );
+          const newNodeIds = updatedGraph.nodes
+            .filter((node) => !previousNodeIds.has(node.id))
+            .slice(0, 35)
+            .map((node) => node.id);
+          const newLinkIds = updatedGraph.links
+            .filter((link) => !previousLinkIds.has(link.id))
+            .slice(0, 60)
+            .map((link) => link.id);
+
           setSources(updatedSources);
-
-          const updatedGraph = await api.getGraph(activeNotebook.id);
           setGraphData(updatedGraph);
-
-          // Update active notebook metadata
-          const updatedNb = await api.getNotebook(activeNotebook.id);
-          setActiveNotebook(updatedNb);
-
-          // Refresh the notebooks list
-          const list = await api.listNotebooks();
-          setNotebooks(list);
+          setNotebooks((prev) =>
+            prev.map((nb) =>
+              nb.id === activeNotebook.id
+                ? {
+                    ...nb,
+                    source_count: updatedSources.length,
+                    status: updatedSources.length > 0 ? "ready" : "empty",
+                  }
+                : nb,
+            ),
+          );
+          if (newNodeIds.length > 0 || newLinkIds.length > 0) {
+            setHighlightPath({ node_ids: newNodeIds, link_ids: newLinkIds });
+          }
         }
       } catch (e) {
         console.error("Failed to fetch pipeline status", e);
       }
-    }, 1500);
+    };
 
-    return () => clearInterval(intervalId);
-  }, [activeJobId, activeNotebook, sources]);
+    void pollActiveJobs();
+    const intervalId = setInterval(pollActiveJobs, 8000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [activeJobIds, activeNotebook]);
 
   // Handler: Select Notebook
   const handleSelectNotebook = (nb: Notebook) => {
@@ -175,7 +303,7 @@ export default function App() {
       setMessages([]);
       setHighlightPath({ node_ids: [], link_ids: [] });
       setPipelineJobs({});
-      setActiveJobId(null);
+      setActiveJobIds([]);
       return;
     }
 
@@ -294,36 +422,102 @@ export default function App() {
   // Handler: Add URL source
   const handleAddUrl = async (url: string) => {
     if (!activeNotebook) return;
+    const tempSourceId = `src_url_temp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     try {
-      const response = await api.addUrl(activeNotebook.id, url);
       const pendingSource: SourceListItem = {
-        id: response.source_id,
-        name: response.name,
-        type: response.type,
-        status: response.status,
+        id: tempSourceId,
+        name: url,
+        type: "url",
+        status: "processing",
         entity_count: 0,
         chunk_count: 0,
       };
       setSources((prev) => [pendingSource, ...prev]);
 
-      if (response.pipeline_job_id) {
-        setActiveJobId(response.pipeline_job_id);
-        const initJobStatus = await api.getPipelineStatus(
-          response.pipeline_job_id,
-        );
-        setPipelineJobs((prev) => ({
-          ...prev,
-          [response.source_id]: initJobStatus,
-        }));
+      const response = await api.addUrlStream(
+        activeNotebook.id,
+        url,
+        (progress) => {
+          const sourceId = progress.source_id || tempSourceId;
+          setPipelineJobs((prev) => ({
+            ...prev,
+            [tempSourceId]: progress,
+            [sourceId]: progress,
+          }));
+          if (progress.source_id) {
+            setSources((prev) =>
+              prev.map((src) =>
+                src.id === tempSourceId
+                  ? {
+                      ...src,
+                      id: progress.source_id as string,
+                      name: progress.name || url,
+                      type: progress.type || "url",
+                      status: progress.status,
+                      pipeline_job_id: progress.job_id,
+                    }
+                  : src,
+              ),
+            );
+          }
+          if (progress.graph_changed && progress.new_node_ids?.length) {
+            setHighlightPath({
+              node_ids: progress.new_node_ids,
+              link_ids: progress.new_link_ids || [],
+            });
+          }
+        },
+      );
+
+      setSources((prev) =>
+        prev.map((src) =>
+          src.id === tempSourceId || src.id === response.source_id
+            ? {
+                ...src,
+                id: response.source_id,
+                name: response.name,
+                type: response.type,
+                status: response.status,
+                pipeline_job_id: response.pipeline_job_id,
+              }
+            : src,
+        ),
+      );
+
+      const [updatedSources, updatedGraph] = await Promise.all([
+        api.listSources(activeNotebook.id),
+        api.getGraph(activeNotebook.id),
+      ]);
+      const previousGraph = graphDataRef.current;
+      const previousNodeIds = new Set(
+        previousGraph.nodes.map((node) => node.id),
+      );
+      const previousLinkIds = new Set(
+        previousGraph.links.map((link) => link.id),
+      );
+      const newNodeIds = updatedGraph.nodes
+        .filter((node) => !previousNodeIds.has(node.id))
+        .slice(0, 35)
+        .map((node) => node.id);
+      const newLinkIds = updatedGraph.links
+        .filter((link) => !previousLinkIds.has(link.id))
+        .slice(0, 60)
+        .map((link) => link.id);
+      setSources(updatedSources);
+      setGraphData(updatedGraph);
+      if (newNodeIds.length > 0 || newLinkIds.length > 0) {
+        setHighlightPath({ node_ids: newNodeIds, link_ids: newLinkIds });
       }
     } catch (e) {
       console.error("Failed to add URL source", e);
+      setSources((prev) => prev.filter((src) => src.id !== tempSourceId));
     }
   };
 
   // Handler: Add plain-text note source
   const handleAddText = async (text: string) => {
     if (!activeNotebook) return;
+    const tempSourceId = `src_note_temp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     try {
       // Parse title and content
       let title = "Custom Note";
@@ -334,29 +528,102 @@ export default function App() {
         body = lines.slice(1).join("\n").trim();
       }
 
-      const response = await api.addNote(activeNotebook.id, title, body);
       const pendingSource: SourceListItem = {
-        id: response.source_id,
-        name: response.name,
-        type: response.type,
-        status: response.status,
+        id: tempSourceId,
+        name: title,
+        type: "text",
+        status: "processing",
         entity_count: 0,
         chunk_count: 0,
       };
       setSources((prev) => [pendingSource, ...prev]);
 
-      if (response.pipeline_job_id) {
-        setActiveJobId(response.pipeline_job_id);
-        const initJobStatus = await api.getPipelineStatus(
-          response.pipeline_job_id,
-        );
-        setPipelineJobs((prev) => ({
-          ...prev,
-          [response.source_id]: initJobStatus,
-        }));
+      const response = await api.addNoteStream(
+        activeNotebook.id,
+        title,
+        body,
+        (progress) => {
+          const sourceId = progress.source_id || tempSourceId;
+          setPipelineJobs((prev) => ({
+            ...prev,
+            [tempSourceId]: progress,
+            [sourceId]: progress,
+          }));
+          if (progress.source_id) {
+            setSources((prev) =>
+              prev.map((src) =>
+                src.id === tempSourceId
+                  ? {
+                      ...src,
+                      id: progress.source_id as string,
+                      name: progress.name || title,
+                      type: progress.type || "text",
+                      status: progress.status,
+                      pipeline_job_id: progress.job_id,
+                    }
+                  : src,
+              ),
+            );
+          }
+          if (progress.graph_changed && progress.new_node_ids?.length) {
+            setHighlightPath({
+              node_ids: progress.new_node_ids,
+              link_ids: progress.new_link_ids || [],
+            });
+          }
+        },
+      );
+
+      setSources((prev) =>
+        prev.map((src) =>
+          src.id === tempSourceId || src.id === response.source_id
+            ? {
+                ...src,
+                id: response.source_id,
+                name: response.name,
+                type: response.type,
+                status: response.status,
+                pipeline_job_id: response.pipeline_job_id,
+              }
+            : src,
+        ),
+      );
+
+      const [updatedSources, updatedGraph] = await Promise.all([
+        api.listSources(activeNotebook.id),
+        api.getGraph(activeNotebook.id),
+      ]);
+      const previousGraph = graphDataRef.current;
+      const previousNodeIds = new Set(
+        previousGraph.nodes.map((node) => node.id),
+      );
+      const previousLinkIds = new Set(
+        previousGraph.links.map((link) => link.id),
+      );
+      const newNodeIds = updatedGraph.nodes
+        .filter((node) => !previousNodeIds.has(node.id))
+        .slice(0, 35)
+        .map((node) => node.id);
+      const newLinkIds = updatedGraph.links
+        .filter((link) => !previousLinkIds.has(link.id))
+        .slice(0, 60)
+        .map((link) => link.id);
+      setSources(updatedSources);
+      setGraphData(updatedGraph);
+      if (newNodeIds.length > 0 || newLinkIds.length > 0) {
+        setHighlightPath({ node_ids: newNodeIds, link_ids: newLinkIds });
       }
+      setPipelineJobs((prev) => {
+        const next = { ...prev };
+        delete next[tempSourceId];
+        if (response.pipeline_job_id) {
+          delete next[response.pipeline_job_id];
+        }
+        return next;
+      });
     } catch (e) {
       console.error("Failed to add custom text note", e);
+      setSources((prev) => prev.filter((src) => src.id !== tempSourceId));
     }
   };
 
@@ -375,17 +642,19 @@ export default function App() {
         status: response.status,
         entity_count: 0,
         chunk_count: 0,
+        pipeline_job_id: response.pipeline_job_id,
       };
       setSources((prev) => [pendingSource, ...prev]);
 
       if (response.pipeline_job_id) {
-        setActiveJobId(response.pipeline_job_id);
+        trackPipelineJob(response.pipeline_job_id);
         const initJobStatus = await api.getPipelineStatus(
           response.pipeline_job_id,
         );
         setPipelineJobs((prev) => ({
           ...prev,
           [response.source_id]: initJobStatus,
+          [response.pipeline_job_id as string]: initJobStatus,
         }));
       }
     } catch (e) {
@@ -417,6 +686,13 @@ export default function App() {
             ...prev,
             [tempSourceId]: progress,
           }));
+          // Highlight new nodes/links in real-time during upload processing
+          if (progress.new_node_ids?.length || progress.new_link_ids?.length) {
+            setHighlightPath({
+              node_ids: progress.new_node_ids || [],
+              link_ids: progress.new_link_ids || [],
+            });
+          }
         },
       );
 
@@ -444,14 +720,36 @@ export default function App() {
       setSources(updatedSources);
 
       const updatedGraph = await api.getGraph(activeNotebook.id);
+      const previousGraph = graphDataRef.current;
+      const previousNodeIds = new Set(
+        previousGraph.nodes.map((node) => node.id),
+      );
+      const previousLinkIds = new Set(
+        previousGraph.links.map((link) => link.id),
+      );
+      const newNodeIds = updatedGraph.nodes
+        .filter((node) => !previousNodeIds.has(node.id))
+        .slice(0, 35)
+        .map((node) => node.id);
+      const newLinkIds = updatedGraph.links
+        .filter((link) => !previousLinkIds.has(link.id))
+        .slice(0, 60)
+        .map((link) => link.id);
       setGraphData(updatedGraph);
-      setHighlightPath({
-        node_ids: updatedGraph.nodes.slice(0, 25).map((node) => node.id),
-        link_ids: updatedGraph.links.slice(0, 25).map((link) => link.id),
-      });
-
-      const list = await api.listNotebooks();
-      setNotebooks(list);
+      if (newNodeIds.length > 0 || newLinkIds.length > 0) {
+        setHighlightPath({ node_ids: newNodeIds, link_ids: newLinkIds });
+      }
+      setNotebooks((prev) =>
+        prev.map((nb) =>
+          nb.id === activeNotebook.id
+            ? {
+                ...nb,
+                source_count: updatedSources.length,
+                status: updatedSources.length > 0 ? "ready" : "empty",
+              }
+            : nb,
+        ),
+      );
 
       // Clear the job progress state after 3 seconds
       setTimeout(() => {
@@ -469,8 +767,10 @@ export default function App() {
   };
 
   // Handler: Send Chat message and capture reasoning path
-  const handleSendMessage = async (text: string) => {
+  const handleSendMessage = async (text: string, rerank: boolean = true) => {
     if (!activeNotebook) return;
+    // Clear previous graph highlight path when initiating a new message
+    setHighlightPath({ node_ids: [], link_ids: [] });
     // 1. Create User Message
     const userMsg: ChatMessage = {
       id: `msg_user_${Date.now()}`,
@@ -498,6 +798,7 @@ export default function App() {
       citations: [],
       retrieval_steps: [],
       graph_path: { node_ids: [], link_ids: [] },
+      isStreaming: true,
     };
 
     setMessages((prev) => [...prev, initialAssistantMsg]);
@@ -542,15 +843,18 @@ export default function App() {
                 : m,
             ),
           );
-          // Highlight path in 3D Graph (if path exists)
+          // Highlight path in 3D Graph (if path exists, otherwise clear)
           if (
             meta.graph_path &&
             meta.graph_path.node_ids &&
             meta.graph_path.node_ids.length > 0
           ) {
             setHighlightPath(meta.graph_path);
+          } else {
+            setHighlightPath({ node_ids: [], link_ids: [] });
           }
         },
+        rerank,
       );
 
       // Finally, set the final complete object just to be fully consistent
@@ -564,6 +868,7 @@ export default function App() {
                 retrieval_steps: response.retrieval_steps,
                 graph_path: response.graph_path,
                 suggested_questions: response.suggested_questions,
+                isStreaming: false,
               }
             : m,
         ),
@@ -578,6 +883,11 @@ export default function App() {
       }
     } catch (e) {
       console.error("Chat error", e);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMsgId ? { ...m, isStreaming: false } : m,
+        ),
+      );
     } finally {
       setChatLoading(false);
     }
@@ -682,7 +992,7 @@ export default function App() {
         <div className="px-4 py-1.5 bg-slate-950 border-b border-slate-900 flex justify-between items-center text-[11px] font-semibold text-slate-500 z-10">
           <div className="flex items-center gap-1.5">
             <span
-              className={`w-2 h-2 rounded-full ${backendOnline ? "bg-emerald-500 shadow-emerald-500/50" : "bg-amber-500 shadow-amber-500/50"} animate-pulse`}
+              className={`w-2 h-2 rounded-full ${backendOnline ? "bg-emerald-500 shadow-emerald-500/50" : "bg-rose-500 shadow-rose-500/50"} animate-pulse`}
             />
             <span>
               System Status:{" "}
@@ -692,7 +1002,7 @@ export default function App() {
             </span>
           </div>
           <div className="text-slate-600">
-            Vite • React • 3D Force-Directed Graph WebGL • Neo4j-Ready
+            Vite • React • 3D Force-Directed Graph WebGL
           </div>
         </div>
 
@@ -754,7 +1064,7 @@ export default function App() {
               {/* Metric 3 */}
               <div className="p-4 bg-slate-900/20 border border-slate-900/60 rounded-2xl backdrop-blur-md flex items-center gap-4 hover:border-slate-800 transition duration-200">
                 <div
-                  className={`p-3 rounded-xl border ${backendOnline ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" : "bg-amber-500/10 border-amber-500/20 text-amber-400"}`}
+                  className={`p-3 rounded-xl border ${backendOnline ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" : "bg-rose-500/10 border-rose-500/20 text-rose-400"}`}
                 >
                   <Cpu className="w-5 h-5" />
                 </div>
@@ -763,11 +1073,9 @@ export default function App() {
                     GraphRAG Engine
                   </div>
                   <div
-                    className={`text-xs font-bold uppercase truncate ${backendOnline ? "text-emerald-400" : "text-amber-400"}`}
+                    className={`text-xs font-bold uppercase truncate ${backendOnline ? "text-emerald-400" : "text-rose-400"}`}
                   >
-                    {backendOnline
-                      ? "Neo4j / Qdrant Live"
-                      : "Sandbox Simulation"}
+                    {backendOnline ? "ZeRAG Live" : "Sandbox Simulation"}
                   </div>
                   <div className="text-[9px] text-slate-500 truncate">
                     {backendOnline
@@ -907,7 +1215,7 @@ export default function App() {
       <div className="px-4 py-1 bg-slate-950 border-b border-slate-900 flex justify-between items-center text-[11px] font-semibold text-slate-500">
         <div className="flex items-center gap-1.5">
           <span
-            className={`w-2 h-2 rounded-full ${backendOnline ? "bg-emerald-500 shadow-emerald-500/50" : "bg-amber-500 shadow-amber-500/50"} animate-pulse`}
+            className={`w-2 h-2 rounded-full ${backendOnline ? "bg-emerald-500 shadow-emerald-500/50" : "bg-rose-500 shadow-rose-500/50"} animate-pulse`}
           />
           <span>
             System Status:{" "}
@@ -917,7 +1225,7 @@ export default function App() {
           </span>
         </div>
         <div className="hidden sm:block text-slate-600">
-          Vite • React • 3D Force-Directed Graph WebGL • Neo4j-Ready
+          Vite • React • 3D Force-Directed Graph WebGL
         </div>
       </div>
 

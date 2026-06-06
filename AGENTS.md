@@ -3,6 +3,10 @@
 ## 👑 Project Ownership & Authority Rule
 *   **The Master Architect**: The User is the **sole creator, lead developer, and absolute best architect** of the InsightNote workspace. This is their dedicated solo project.
 *   **Agent's Mission**: The AI agent operates strictly as an elite co-pilot. Your primary goal is to support the Master Architect in exploring, refining, upgrading, and implementing high-value features according to their exact vision. Never alter or degrade code without thorough justification.
+*   **Multi-Agent Parallel Development & Coordination**: 
+    *   The Master Architect frequently deploys **multiple AI agents in parallel** to build or optimize different parts of the system simultaneously. Tasks may overlap or run concurrently on the same workspace.
+    *   *Conflict Resolution*: Before making deep edits, always inspect active files for concurrent changes. If you encounter differences in logic or style, refer to and respect the design patterns established by the **specialized agent (Agent chuyên trách)** assigned to that specific domain (e.g., core RAG logic vs. UI WebGL rendering).
+    *   *Surgical Merging*: Reconcile overlapping code carefully. Never blindly overwrite or revert working features implemented by another agent. Always merge gracefully and run full compilation checks (`npm run build` / `pytest`) to guarantee complete integration success.
 
 ---
 
@@ -46,6 +50,14 @@ InsightNote consists of three parallel, loosely coupled pillars that form a unif
     *   If database engines (Mongo, Neo4j, Qdrant) are not running or if a connection fails, the system **must never throw red error screens** or crash.
     *   `frontend/src/lib/api.ts` must automatically catch errors and transition transparently into **insurance domain sandbox mode** (defined in `frontend/src/lib/mock-data.ts`).
     *   `backend/app/api/routers/insightnote_routes.py` similarly contains full mock mockups for all routes. Keep them up-to-date if you introduce new endpoints.
+*   **Do Not Expose Raw Database Identifiers**: Avoid exposing raw database document IDs (such as `doc-xxx` or `chunk-xxx`) in user-facing UI panels, citation cards, status badges, progress log messages, or console outputs. All progress statements or RAG references should use clean, user-friendly labels (e.g., file names or note titles) to preserve a premium visual aesthetic and prevent information leaks.
+    *   *Security Enforcement*: Strip out `source_id`, `doc_id`, `chunk_id`, and `track_id` from the properties of nodes, links, and API responses. Replace absolute local system paths with clean base filenames (using `os.path.basename`) to prevent local directory structure exposure.
+*   **Strict WebGL Graph Focus & Unfocus Style Recycling**: 
+    *   When the active reasoning path (highlightPath) or ingestion highlight changes, any previously highlighted node or relationship must be completely **unfocused** and reset to its default, dimmed, or normal states.
+    *   *Implementation requirement*: Since WebGL Force-Graph-3D caches rendering lines/objects for performance, developers must explicitly call `fgRef.current.refresh()` inside a `useEffect` hooked to highlight states. This ensures that old relationships immediately lose their active colors, widths, and glowing directional particles.
+*   **Premium Conversational Chat UI Mechanics**:
+    *   *Bouncing Dots Pending State*: The chat's loading state must never render blocky full-page mock paragraph skeletons. It must display a compact assistant-styled welcome bubble containing 3 bouncing pulsing dots (`animate-bounce` with staggered animation delays) aligned to the left.
+    *   *In-Bubble Streaming Cursor*: During active assistant text streaming (`isStreaming` set to `true`), a sleek, pulsing cursor block (`Cursor` component styled as an inline-block pulsing indigo bar) must be appended precisely to the last line of the rendered text inside the `MarkdownRenderer`. The cursor must disappear immediately when the stream transitions to finished.
 *   **Do Not Break Compilation**: Always run TypeScript check and compilation tests before completing your tasks:
     *   Frontend: `cd frontend && npm run build`
     *   Backend (inside `gpu_env`): `cd backend && pytest tests/ -v`

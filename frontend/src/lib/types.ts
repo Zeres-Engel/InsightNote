@@ -5,6 +5,7 @@ export interface SourceListItem {
   status: string; // 'processing' | 'ready' | 'failed'
   entity_count?: number;
   chunk_count?: number;
+  pipeline_job_id?: string;
 }
 
 export interface CitationItem {
@@ -75,6 +76,7 @@ export interface ChatMessage {
   retrieval_steps?: string[];
   graph_path?: GraphPath;
   suggested_questions?: string[];
+  isStreaming?: boolean;
 }
 
 export interface Notebook {
@@ -95,11 +97,15 @@ export interface PipelineJobResponse {
   steps: PipelineStep[];
   message?: string;
   percent?: number;
+  progress_percentage?: number;
+  latest_message?: string;
   graph_changed?: boolean;
   graph_node_count?: number;
   graph_link_count?: number;
   new_node_ids?: string[];
   new_link_ids?: string[];
+  extracted_nodes?: GraphNode[];
+  extracted_links?: GraphLink[];
 }
 
 export interface SourceAddResponse {

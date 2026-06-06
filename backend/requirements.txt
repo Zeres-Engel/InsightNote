@@ -9,6 +9,8 @@ numpy
 networkx
 tenacity
 aiohttp
+beautifulsoup4
+crawl4ai==0.6.3
 openai
 sentence-transformers
 # Storage requirements
@@ -27,6 +29,7 @@ json-repair
 mineru[core]
 PyJWT
 python-multipart
+python-docx
+python-pptx
 asyncpg
-# Optional: textract for unified extraction (TXT, DOCX, PPTX, CSV, PDF)
-# pip install textract  # requires system deps: poppler, tesseract, etc.
+

@@ -19,7 +19,7 @@ import { ChatMessage } from "../../lib/types";
 interface ChatPanelProps {
   messages: ChatMessage[];
   isLoading: boolean;
-  onSendMessage: (text: string) => void;
+  onSendMessage: (text: string, rerank: boolean) => void;
   isResume: boolean;
   showSources?: boolean;
   onToggleSources?: () => void;
@@ -67,16 +67,18 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         ? PRESET_BADGES_RESUME
         : PRESET_BADGES_DOCUMENT;
 
+  const [rerankEnabled, setRerankEnabled] = useState(true);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
-    onSendMessage(input.trim());
+    onSendMessage(input.trim(), rerankEnabled);
     setInput("");
   };
 
   const handleBadgeClick = (question: string) => {
     if (isLoading) return;
-    onSendMessage(question);
+    onSendMessage(question, rerankEnabled);
   };
 
   // Scroll to bottom on new messages
@@ -109,7 +111,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         </div>
         <div className="text-xs text-slate-500 font-medium flex items-center gap-1.5">
           <BrainCircuit className="w-3.5 h-3.5 text-indigo-400" />
-          Powered by ZeRAG & Neo4j
+          Powered by ZeRAG
         </div>
       </div>
 
@@ -134,10 +136,16 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             </div>
           </div>
         ) : (
-          messages.map((msg) => <MessageBubble key={msg.id} message={msg} />)
+          messages.map((msg) => {
+            return <MessageBubble key={msg.id} message={msg} />;
+          })
         )}
 
-        {isLoading && <LoadingSkeleton />}
+        {isLoading &&
+          (!messages.length ||
+            messages[messages.length - 1].role !== "assistant") && (
+            <LoadingSkeleton />
+          )}
         <div ref={messagesEndRef} />
       </div>
 
@@ -169,6 +177,19 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           </div>
         </div>
 
+        {/* Toggle Controls */}
+        <div className="flex items-center gap-2 mb-2.5 justify-end px-1">
+          <label className="flex items-center gap-2 text-[10px] font-semibold text-slate-400 hover:text-slate-200 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={rerankEnabled}
+              onChange={(e) => setRerankEnabled(e.target.checked)}
+              className="w-3.5 h-3.5 rounded border-slate-800 text-indigo-600 focus:ring-indigo-500/30 bg-slate-900 cursor-pointer"
+            />
+            <span>Enable Reranking (Cross-Encoder)</span>
+          </label>
+        </div>
+
         {/* Input Form */}
         <form onSubmit={handleSubmit} className="flex gap-2 relative">
           <input
@@ -195,6 +216,42 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       </div>
     </div>
   );
+};
+
+const RenderXRightArrow: React.FC<{ label: string }> = ({ label }) => {
+  return (
+    <span
+      className="inline-flex flex-col items-center justify-center mx-1.5 relative select-none animate-fade-in"
+      style={{ verticalAlign: "middle" }}
+    >
+      <span className="text-[10px] text-indigo-300 font-semibold pb-0.5 leading-none">
+        {label}
+      </span>
+      <span className="flex items-center w-full leading-none text-indigo-500">
+        <span className="h-[1.5px] bg-indigo-500 flex-1 min-w-[32px]"></span>
+        <span className="text-[10px] -ml-[3px]">➔</span>
+      </span>
+    </span>
+  );
+};
+
+const renderMathAndText = (text: string): React.ReactNode => {
+  if (!text) return "";
+
+  // Match \xrightarrow{\text{label}} or \xrightarrow{label}
+  const xArrowRegex = /\\xrightarrow(?:\\{\\text)?\\{([^}]+)\\}(?:\})?/g;
+
+  const segments = text.split(xArrowRegex);
+  if (segments.length <= 1) {
+    return text;
+  }
+
+  return segments.map((seg, idx) => {
+    if (idx % 2 === 1) {
+      return <RenderXRightArrow key={idx} label={seg} />;
+    }
+    return seg;
+  });
 };
 
 /* Helper to parse custom markdown (bolding, lists, code, file highlights) */
@@ -232,7 +289,7 @@ const renderBoldText = (text: string) => {
             key={idx}
             className="font-bold text-emerald-400 bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-900/50 shadow-sm inline-flex items-center gap-0.5"
           >
-            {part}
+            {renderMathAndText(part)}
           </strong>
         );
       }
@@ -241,7 +298,7 @@ const renderBoldText = (text: string) => {
           key={idx}
           className="font-bold text-indigo-400 bg-indigo-950/30 px-1.5 py-0.5 rounded border border-indigo-900/40"
         >
-          {part}
+          {renderMathAndText(part)}
         </strong>
       );
     }
@@ -260,16 +317,23 @@ const renderBoldText = (text: string) => {
             </code>
           );
         }
-        return subPart;
+        return renderMathAndText(subPart);
       });
     }
 
-    return part;
+    return renderMathAndText(part);
   });
 };
 
 /* Custom Markdown Rendering Component */
-const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
+const Cursor = () => (
+  <span className="inline-block w-1.5 h-3.5 ml-1 bg-indigo-400 animate-pulse rounded-sm align-middle" />
+);
+
+const MarkdownRenderer: React.FC<{
+  content: string;
+  isStreaming?: boolean;
+}> = ({ content, isStreaming }) => {
   // Strip raw references and citations lists to prevent visual duplication with the beautiful Grounded Citations UI panel below
   let cleanContent = content || "";
   const refsHeaderIndex = cleanContent.search(
@@ -280,11 +344,13 @@ const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
   }
 
   const lines = cleanContent.split("\n");
+  const lastLineIndex = lines.length - 1;
 
   return (
     <div className="space-y-2">
       {lines.map((line, lineIdx) => {
         const trimmed = line.trim();
+        const isLastLine = lineIdx === lastLineIndex && isStreaming;
 
         // Title markers
         if (trimmed.startsWith("### ")) {
@@ -295,6 +361,7 @@ const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
             >
               <span className="w-1.5 h-3 bg-indigo-500 rounded-full animate-pulse"></span>
               {renderBoldText(trimmed.slice(4))}
+              {isLastLine && <Cursor />}
             </h4>
           );
         }
@@ -309,6 +376,7 @@ const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
             >
               <span className="w-2 h-3.5 bg-emerald-500 rounded-full"></span>
               {renderBoldText(cleanText)}
+              {isLastLine && <Cursor />}
             </h3>
           );
         }
@@ -320,6 +388,7 @@ const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1.5 flex-shrink-0"></span>
               <span className="text-slate-350 text-[12.5px] leading-relaxed">
                 {renderBoldText(trimmed.slice(2))}
+                {isLastLine && <Cursor />}
               </span>
             </div>
           );
@@ -337,6 +406,7 @@ const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
               </span>
               <span className="text-slate-350 text-[12.5px] leading-relaxed flex-1">
                 {renderBoldText(text)}
+                {isLastLine && <Cursor />}
               </span>
             </div>
           );
@@ -354,6 +424,7 @@ const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
             className="text-slate-300 text-[12.5px] leading-relaxed"
           >
             {renderBoldText(line)}
+            {isLastLine && <Cursor />}
           </p>
         );
       })}
@@ -364,7 +435,10 @@ const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
 /* Individual Message Bubble Helper with expandable Steps */
 const MessageBubble: React.FC<{ message: ChatMessage }> = ({ message }) => {
   const isAssistant = message.role === "assistant";
-  const [stepsExpanded, setStepsExpanded] = useState(false);
+  // Default expanded to true during thinking/retrieval phase so user sees reasoning steps in real-time!
+  const [stepsExpanded, setStepsExpanded] = useState(
+    isAssistant && !message.content,
+  );
 
   return (
     <div
@@ -388,7 +462,25 @@ const MessageBubble: React.FC<{ message: ChatMessage }> = ({ message }) => {
           }`}
         >
           {isAssistant ? (
-            <MarkdownRenderer content={message.content} />
+            message.content ? (
+              <MarkdownRenderer
+                content={message.content}
+                isStreaming={message.isStreaming}
+              />
+            ) : (
+              /* GORGEOUS SHIMMERING SKELETON LOADING STATE INSIDE BUBBLE */
+              <div className="space-y-2.5 py-1.5 animate-pulse min-w-[240px] max-w-[320px]">
+                <div className="flex items-center gap-2 text-indigo-400 mb-2">
+                  <Sparkles className="w-3.5 h-3.5 animate-spin-slow" />
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-400">
+                    AI is reasoning...
+                  </span>
+                </div>
+                <div className="h-2 bg-slate-800/80 rounded w-[95%]" />
+                <div className="h-2 bg-slate-800/60 rounded w-[80%]" />
+                <div className="h-2 bg-slate-800/40 rounded w-[55%]" />
+              </div>
+            )
           ) : (
             <p className="text-[12.5px] leading-relaxed">{message.content}</p>
           )}
@@ -471,15 +563,17 @@ const MessageBubble: React.FC<{ message: ChatMessage }> = ({ message }) => {
 /* Chat Skeletons */
 const LoadingSkeleton = () => {
   return (
-    <div className="flex gap-3.5 justify-start">
-      <div className="w-8 h-8 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-500 flex-shrink-0">
-        <Sparkles className="w-4.5 h-4.5 animate-pulse" />
+    <div className="flex gap-3.5 justify-start animate-fade-in">
+      <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-500 to-emerald-500 p-[1px] flex-shrink-0 shadow-lg shadow-indigo-500/5">
+        <div className="w-full h-full rounded-[7px] bg-slate-950 flex items-center justify-center text-indigo-400">
+          <Sparkles className="w-4.5 h-4.5 animate-pulse" />
+        </div>
       </div>
-      <div className="max-w-[70%] w-full flex flex-col gap-2">
-        <div className="p-3.5 bg-slate-900 border border-slate-800/60 rounded-2xl space-y-2.5 animate-pulse">
-          <div className="h-3 bg-slate-800 rounded w-[95%]"></div>
-          <div className="h-3 bg-slate-800 rounded w-[85%]"></div>
-          <div className="h-3 bg-slate-800 rounded w-[50%]"></div>
+      <div className="max-w-[70%]">
+        <div className="p-3 bg-slate-900/40 border border-slate-950/20 rounded-2xl rounded-tl-none shadow-xl backdrop-blur-md flex items-center gap-1.5 h-[42px] px-4">
+          <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+          <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+          <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce"></span>
         </div>
       </div>
     </div>

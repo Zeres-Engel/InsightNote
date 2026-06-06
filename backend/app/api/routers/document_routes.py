@@ -2613,11 +2613,8 @@ def create_document_routes(
         from fastapi.responses import StreamingResponse
 
         from app.api.routers.insightnote_routes import (
-            active_jobs_db,
-            ensure_notebook_exists,
             get_notebook_input_dir,
             get_rag_instance,
-            notebooks_db,
         )
         from app.core.history.chat_history import chat_history_db
 
@@ -2647,7 +2644,6 @@ def create_document_routes(
                 if not workspace_record:
                     yield f"{json.dumps({'error': f'Workspace {workspace} does not exist in PostgreSQL.'})}\n"
                     return
-                ensure_notebook_exists(workspace, workspace_record["name"])
                 target_rag = await get_rag_instance(workspace, rag)
                 input_dir = get_notebook_input_dir(workspace)
 
@@ -2721,17 +2717,15 @@ def create_document_routes(
                 yield f"{json.dumps({'error': f'File too large. Maximum size: {global_args.max_upload_size / 1024 / 1024:.1f}MB'})}\n"
                 return
 
-            # Register job in active_jobs_db (mimics how insightnote_routes registers job)
-            active_jobs_db[job_id] = {
-                "job_id": job_id,
-                "notebook_id": workspace or "default",
-                "filename": safe_filename,
-                "created_at": time.time(),
-                "force_mineru_fallback": False,
-            }
+            # Register job in PostgreSQL database
+            await chat_history_db.create_job(
+                job_id=job_id,
+                notebook_id=workspace or "default",
+                filename=safe_filename,
+                force_mineru_fallback=False,
+            )
 
-            if workspace and workspace in notebooks_db:
-                notebooks_db[workspace]["status"] = "processing"
+            if workspace:
                 await chat_history_db.update_notebook_status(
                     workspace, status="processing"
                 )
@@ -2749,10 +2743,7 @@ def create_document_routes(
             }
 
             if multi_modal and multi_rag is not None and ext in mineru_supported_exts:
-                (
-                    success,
-                    final_track_id,
-                ) = await target_rag.apipeline_enqueue_file_reference(
+                success, final_track_id = await target_rag.apipeline_enqueue_file_reference(
                     str(file_path.absolute()),
                     track_id=job_id,
                     metadata={"graph_mode": graph_mode, "multi_modal": multi_modal},
@@ -2825,41 +2816,47 @@ def create_document_routes(
                 from pathlib import Path
 
                 def parse_indexing_progress(line: str):
-                    if (
-                        "Completed merging" in line
-                        or "Completed processing file" in line
-                    ):
+                    if not line:
+                        return None
+                    
+                    # Clean log prefixes (timestamps, levels)
+                    cleaned = line.strip()
+                    cleaned = re.sub(r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+\[?(INFO|WARNING|ERROR|DEBUG|SUCCESS)\]?\s*", "", cleaned)
+                    cleaned = re.sub(r"^(INFO|WARNING|ERROR|DEBUG|SUCCESS)\s*:\s*", "", cleaned)
+                    cleaned = cleaned.strip()
+
+                    if "Completed merging" in cleaned or "Completed processing file" in cleaned or "Enqueued document processing pipeline stopped" in cleaned:
                         return "Indexing completed successfully.", 100
-                    if "Phase 3:" in line:
+                    if "Phase 3:" in cleaned:
                         return "Finalizing indexed knowledge...", 95
-                    if "Phase 2: Processing" in line:
+                    if "Phase 2: Processing" in cleaned:
                         match = re.search(
-                            r"Phase 2:\s*Processing\s*(\d+)\s*relations", line
+                            r"Phase 2:\s*Processing\s*(\d+)\s*relations", cleaned
                         )
                         n = match.group(1) if match else ""
                         return (
-                            f"Vector & Graph Sync Orchestration: {n} relationship links..."
+                            f"Mapping {n} relationship links..."
                             if n
-                            else "Vector & Graph Sync Orchestration: relationships...",
+                            else "Mapping relationship links...",
                             90,
                         )
-                    if "Phase 1: Processing" in line:
+                    if "Phase 1: Processing" in cleaned:
                         match = re.search(
-                            r"Phase 1:\s*Processing\s*(\d+)\s*entities", line
+                            r"Phase 1:\s*Processing\s*(\d+)\s*entities", cleaned
                         )
                         n = match.group(1) if match else ""
                         return (
-                            f"Vector & Graph Sync Orchestration: {n} discovered entities..."
+                            f"Exploring {n} discovered entities..."
                             if n
-                            else "Vector & Graph Sync Orchestration: entities...",
+                            else "Exploring discovered entities...",
                             85,
                         )
-                    if "Enriched" in line or "returned enriched content" in line:
-                        return "Vector & Graph Sync Orchestration started...", 80
-                    if "Chunk " in line and " extracted " in line:
+                    if "Enriched" in cleaned or "returned enriched content" in cleaned:
+                        return "Sync orchestration started...", 80
+                    if "Chunk " in cleaned and " extracted " in cleaned:
                         match = re.search(
                             r"Chunk\s+(\d+)\s+of\s+(\d+)\s+extracted\s+(\d+)\s+Ent\s+\+\s+(\d+)\s+Rel",
-                            line,
+                            cleaned,
                         )
                         if match:
                             cur, total, ent, rel = match.groups()
@@ -2867,10 +2864,26 @@ def create_document_routes(
                                 (int(cur) / max(int(total), 1)) * 10
                             )
                             return (
-                                f"Vector & Graph Sync Orchestration: chunk {cur}/{total}, {ent} entities + {rel} relations",
+                                f"Semantic extraction chunk {cur}/{total}: {ent} entities + {rel} relations",
                                 82 + chunk_percent,
                             )
-                        return "Vector & Graph Sync Orchestration running...", 84
+                        return "Sync orchestration running...", 84
+                    if "google_genai.models: AFC is enabled" in cleaned:
+                        return "Connecting to Gemini LLM...", 78
+                    if "LLM func:" in cleaned and "workers initialized" in cleaned:
+                        return "Initializing AI extraction workers...", 77
+                    if "== LLM cache == saving" in cleaned:
+                        return "Caching semantic extraction results...", 79
+                    if "Merging stage" in cleaned:
+                        return "Merging knowledge graph updates...", 81
+                    if "Merged:" in cleaned or "LLMmrg:" in cleaned:
+                        match = re.search(r"(?:Merged|LLMmrg):\s*`([^`]+)`", cleaned)
+                        msg = f"Aligning entity '{match.group(1)}'..." if match else "Aligning extracted entities..."
+                        return msg, 88
+                    if "In memory DB persist to disk" in cleaned:
+                        return "Saving graph database to disk...", 98
+                    if "Starting crawl" in cleaned or "crawl" in cleaned.lower():
+                        return "Crawling web page content...", 10
                     return None
 
                 try:
@@ -3017,9 +3030,7 @@ def create_document_routes(
                             {"name": s[0], "status": "done"} for s in step_definitions
                         ]
                         progress_msg = "Indexing completed successfully."
-                        if workspace and workspace in notebooks_db:
-                            notebooks_db[workspace]["status"] = "ready"
-                            notebooks_db[workspace]["source_count"] = len(docs_by_track)
+                        if workspace:
                             await chat_history_db.update_notebook_status(
                                 workspace,
                                 status="ready",
@@ -3028,8 +3039,7 @@ def create_document_routes(
                     elif any_failed_real:
                         status = "failed"
                         progress_msg = "Processing failed: " + error_msg
-                        if workspace and workspace in notebooks_db:
-                            notebooks_db[workspace]["status"] = "ready"
+                        if workspace:
                             await chat_history_db.update_notebook_status(
                                 workspace, status="ready"
                             )
@@ -3038,9 +3048,7 @@ def create_document_routes(
                 else:
                     if percent == 100:
                         status = "ready"
-                        if workspace and workspace in notebooks_db:
-                            notebooks_db[workspace]["status"] = "ready"
-                            notebooks_db[workspace]["source_count"] = 1
+                        if workspace:
                             await chat_history_db.update_notebook_status(
                                 workspace, status="ready", source_count=1
                             )
@@ -3131,97 +3139,6 @@ def create_document_routes(
                 "X-Accel-Buffering": "no",
             },
         )
-
-    @router.post(
-        "/texts",
-        response_model=InsertResponse,
-        dependencies=[Depends(combined_auth)],
-    )
-    async def insert_texts(
-        request: InsertTextsRequest, background_tasks: BackgroundTasks
-    ):
-        """
-        Insert multiple texts into the RAG system.
-
-        This endpoint allows you to insert multiple text entries into the RAG system
-        in a single request.
-
-        Args:
-            request (InsertTextsRequest): The request body containing the list of texts.
-            background_tasks: FastAPI BackgroundTasks for async processing
-
-        Returns:
-            InsertResponse: A response object containing the status of the operation.
-
-        Raises:
-            HTTPException: If an error occurs during text processing (500).
-        """
-        try:
-            # Check if any file_sources already exist in doc_status storage
-            if request.file_sources:
-                for file_source in request.file_sources:
-                    if (
-                        file_source
-                        and file_source.strip()
-                        and file_source != "unknown_source"
-                    ):
-                        existing_doc_data = await rag.doc_status.get_doc_by_file_path(
-                            file_source
-                        )
-                        if existing_doc_data:
-                            # Get document status and track_id from existing document
-                            status = existing_doc_data.get("status", "unknown")
-                            # Use `or ""` to handle both missing key and None value (e.g., legacy rows without track_id)
-                            existing_track_id = existing_doc_data.get("track_id") or ""
-                            logger.warning(
-                                f"[Duplicate] Batch text source '{file_source}' already exists in document storage (Status: {status}, track_id: {existing_track_id})"
-                            )
-                            return InsertResponse(
-                                status="duplicated",
-                                message=f"File source '{file_source}' already exists in document storage (Status: {status}).",
-                                track_id=existing_track_id,
-                            )
-
-            # Check if any content already exists by computing content hash (doc_id)
-            for text in request.texts:
-                sanitized_text = sanitize_text_for_encoding(text)
-                content_doc_id = compute_mdhash_id(sanitized_text, prefix="doc-")
-                existing_doc = await rag.doc_status.get_by_id(content_doc_id)
-                if existing_doc:
-                    # Content already exists, return duplicated with existing track_id
-                    status = existing_doc.get("status", "unknown")
-                    existing_track_id = existing_doc.get("track_id") or ""
-                    logger.warning(
-                        f"[Duplicate] Batch identical content already exists (doc_id: {content_doc_id}, Status: {status}, track_id: {existing_track_id})"
-                    )
-                    return InsertResponse(
-                        status="duplicated",
-                        message=f"Identical content already exists in document storage (doc_id: {content_doc_id}, Status: {status}).",
-                        track_id=existing_track_id,
-                    )
-
-            # Generate track_id for texts insertion
-            track_id = generate_track_id("insert")
-
-            background_tasks.add_task(
-                pipeline_index_texts,
-                rag,
-                request.texts,
-                file_sources=request.file_sources,
-                track_id=track_id,
-                graph_mode=request.graph_mode,
-                multi_modal=request.multi_modal,
-            )
-
-            return InsertResponse(
-                status="success",
-                message="Texts successfully received. Processing will continue in background.",
-                track_id=track_id,
-            )
-        except Exception as e:
-            logger.error(f"Error /documents/texts: {str(e)}")
-            logger.error(traceback.format_exc())
-            raise HTTPException(status_code=500, detail=str(e))
 
     @router.delete(
         "", response_model=ClearDocumentsResponse, dependencies=[Depends(combined_auth)]
@@ -3967,7 +3884,10 @@ def create_document_routes(
         try:
             # Start the reprocessing in the background
             # Note: Reprocessed documents retain their original track_id from initial upload
-            background_tasks.add_task(rag.apipeline_process_enqueue_documents)
+            background_tasks.add_task(
+                rag.apipeline_process_enqueue_documents,
+                include_failed=True,
+            )
             logger.info("Reprocessing of failed documents initiated")
 
             return ReprocessResponse(

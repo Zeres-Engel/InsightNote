@@ -162,21 +162,62 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
 
   // Adjust nodes/links for the render engine based on highlighting path
   const processedData = useMemo(() => {
-    const hasActiveHighlight = highlightPath.node_ids.length > 0;
+    const hasPathHighlight = highlightPath.node_ids.length > 0;
+    const hasIngestHighlight = newlyIngestedNodeIds.length > 0;
+    const selectedNodeId = selectedNode?.id;
+    const hasSelectHighlight = !!selectedNodeId;
+    const search = searchQuery.trim().toLowerCase();
+    const hasSearchHighlight = !!search;
+
+    const hasActiveHighlight =
+      hasPathHighlight ||
+      hasIngestHighlight ||
+      hasSelectHighlight ||
+      hasSearchHighlight;
+
     const activeNodeIds = new Set(highlightPath.node_ids);
     const activeLinkIds = new Set(highlightPath.link_ids);
-    const selectedNodeId = selectedNode?.id;
-    const search = searchQuery.trim().toLowerCase();
+
+    // Identify which nodes match search
+    const searchedNodeIds = new Set(
+      hasSearchHighlight
+        ? graphData.nodes
+            .filter(
+              (n) =>
+                n.label.toLowerCase().includes(search) ||
+                n.type.toLowerCase().includes(search),
+            )
+            .map((n) => n.id)
+        : [],
+    );
 
     const nodes = graphData.nodes.map((node) => {
       const isReasoningHighlighted = activeNodeIds.has(node.id);
+      const isIngestedHighlighted = newlyIngestedNodeIds.includes(node.id);
       const isSelected = selectedNodeId === node.id;
-      const isSearchMatched =
-        !!search &&
-        ((node.label || "").toLowerCase().includes(search) ||
-          (node.type || "").toLowerCase().includes(search));
+      const isSearchMatched = searchedNodeIds.has(node.id);
+
+      // A node is also considered highlighted if it's connected to the selected node,
+      // so that clicking a node shows its immediate neighborhood clearly.
+      const isNeighborOfSelected =
+        hasSelectHighlight &&
+        graphData.links.some((l) => {
+          const s =
+            typeof l.source === "object" ? (l.source as any).id : l.source;
+          const t =
+            typeof l.target === "object" ? (l.target as any).id : l.target;
+          return (
+            (s === selectedNodeId && t === node.id) ||
+            (t === selectedNodeId && s === node.id)
+          );
+        });
+
       const isHighlighted =
-        isReasoningHighlighted || isSelected || isSearchMatched;
+        isReasoningHighlighted ||
+        isIngestedHighlighted ||
+        isSelected ||
+        isSearchMatched ||
+        isNeighborOfSelected;
 
       // Compute color
       const group = (node.group || node.type || "concept").toLowerCase();
@@ -186,7 +227,7 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
       if (hasActiveHighlight) {
         if (isHighlighted) {
           color = colorForGroup(group); // Keep its beautiful original category color
-          val = 2.5; // Elegant size growth instead of giant balloons
+          val = isSelected ? 3.0 : isReasoningHighlighted || isIngestedHighlighted ? 2.5 : 2.0;
         } else {
           // Dim non-highlighted nodes softly
           color = "rgba(71, 85, 105, 0.15)";
@@ -207,20 +248,56 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
         typeof link.source === "object" ? (link.source as any).id : link.source;
       const targetId =
         typeof link.target === "object" ? (link.target as any).id : link.target;
-      const isHighlighted =
+
+      const isPathLink =
         activeLinkIds.has(link.id) ||
+        activeLinkIds.has(`${sourceId}->${targetId}`) ||
+        activeLinkIds.has(`${targetId}->${sourceId}`) ||
         (activeNodeIds.has(String(sourceId)) &&
           activeNodeIds.has(String(targetId)));
+
+      const isIngestLink =
+        newlyIngestedNodeIds.includes(String(sourceId)) ||
+        newlyIngestedNodeIds.includes(String(targetId));
+
+      const isSelectedLink =
+        hasSelectHighlight &&
+        (String(sourceId) === selectedNodeId ||
+          String(targetId) === selectedNodeId);
+
+      const isSearchLink =
+        hasSearchHighlight &&
+        (searchedNodeIds.has(String(sourceId)) ||
+          searchedNodeIds.has(String(targetId)));
+
+      const isHighlighted =
+        (hasPathHighlight && isPathLink) ||
+        (hasIngestHighlight && isIngestLink) ||
+        isSelectedLink ||
+        isSearchLink;
 
       let color = "#475569"; // default slate-600
       let width = 1.0;
 
       if (hasActiveHighlight) {
         if (isHighlighted) {
-          color = "#38bdf8"; // Premium high-tech glowing sky-blue / neon-blue
-          width = 2.2; // Elegant width instead of 3.5
+          // Colors:
+          // Ingestion: Green (#10b981)
+          // Path highlight: Sky blue (#38bdf8)
+          // Selected node link: Indigo (#6366f1)
+          // Search result link: Sky blue (#38bdf8)
+          if (hasIngestHighlight && isIngestLink) {
+            color = "#10b981";
+          } else if (hasPathHighlight && isPathLink) {
+            color = "#38bdf8";
+          } else if (isSelectedLink) {
+            color = "#6366f1";
+          } else {
+            color = "#38bdf8";
+          }
+          width = 2.2; // Elegant width
         } else {
-          color = "rgba(30, 41, 59, 0.1)";
+          color = "rgba(30, 41, 59, 0.08)";
           width = 0.5;
         }
       }
@@ -233,7 +310,13 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
     });
 
     return { nodes, links };
-  }, [graphData, highlightPath, searchQuery, selectedNode]);
+  }, [
+    graphData,
+    highlightPath,
+    newlyIngestedNodeIds,
+    searchQuery,
+    selectedNode,
+  ]);
 
   // Automatically track newly added nodes on ingestion and pan/glow them
   useEffect(() => {
@@ -347,6 +430,13 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
       onClearHighlight(); // Notify parent to reset highlightPath state!
     }
   };
+
+  // Explicitly force react-force-graph to re-render lines and particles when highlights change
+  useEffect(() => {
+    if (fgRef.current) {
+      fgRef.current.refresh();
+    }
+  }, [highlightPath, newlyIngestedNodeIds]);
 
   // Auto zoom-to-fit on reasoning path changes
   useEffect(() => {
@@ -510,7 +600,7 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
             link.width > 1.5 ? 3.0 : 0
           }
           linkDirectionalParticleSpeed={(link: any) => 0.015}
-          linkDirectionalParticleColor={() => "#38bdf8"} // Neon sky-blue light pulses
+          linkDirectionalParticleColor={(link: any) => link.color} // Pulsing light follows link color (blue/green)
         />
 
         {/* Reset / Camera Controls Overlay Toolbar */}
@@ -611,8 +701,8 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
 
         {/* Active highlight indicator */}
         {highlightPath.node_ids.length > 0 && (
-          <div className="absolute right-4 bottom-4 z-10 bg-amber-950/40 border border-amber-900/50 text-amber-300 rounded-xl p-2.5 backdrop-blur-sm text-[10px] font-medium flex items-center gap-1.5 max-w-[200px]">
-            <GitCommit className="w-4 h-4 text-amber-500 animate-pulse-fast flex-shrink-0" />
+          <div className="absolute right-4 bottom-4 z-10 bg-indigo-950/60 border border-indigo-500/30 text-indigo-200 rounded-xl p-2.5 backdrop-blur-sm text-[10px] font-medium flex items-center gap-1.5 max-w-[200px]">
+            <GitCommit className="w-4 h-4 text-indigo-400 animate-pulse-fast flex-shrink-0" />
             <span>
               Path highlighted! Dimensions auto-focused. Click Reset View to
               clear.

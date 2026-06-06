@@ -249,6 +249,101 @@ export async function addUrl(
   }
 }
 
+async function readSourceIngestStream(
+  endpoint: string,
+  body: unknown,
+  onProgress: (progress: PipelineJobResponse & {
+    source_id?: string;
+    name?: string;
+    type?: string;
+  }) => void,
+): Promise<{
+  source_id: string;
+  name: string;
+  type: string;
+  status: string;
+  pipeline_job_id?: string;
+}> {
+  const response = await fetch(`${BASE_URL}${endpoint}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Source stream failed: ${response.statusText}`);
+  }
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("Response body is not readable");
+  }
+
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  let lastPayload: any = {};
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const data = JSON.parse(line);
+      lastPayload = data;
+      onProgress({
+        job_id: data.job_id,
+        status: data.status,
+        steps: data.steps || [],
+        message: data.message || data.latest_message,
+        percent: data.percent ?? data.progress_percentage,
+        progress_percentage: data.progress_percentage,
+        latest_message: data.latest_message,
+        graph_changed: data.graph_changed,
+        graph_node_count: data.graph_node_count,
+        graph_link_count: data.graph_link_count,
+        new_node_ids: data.new_node_ids || [],
+        new_link_ids: data.new_link_ids || [],
+        source_id: data.source_id,
+        name: data.name,
+        type: data.type,
+      });
+      if (data.error) {
+        throw new Error(data.message || data.error);
+      }
+    }
+  }
+
+  return {
+    source_id:
+      lastPayload.source_id ||
+      `src_${(lastPayload.job_id || Math.random().toString(36)).replace(/^job_/, "")}`,
+    name: lastPayload.name || "Source",
+    type: lastPayload.type || "text",
+    status: lastPayload.status || "processing",
+    pipeline_job_id: lastPayload.job_id,
+  };
+}
+
+export async function addUrlStream(
+  notebookId: string,
+  url: string,
+  onProgress: Parameters<typeof readSourceIngestStream>[2],
+) {
+  try {
+    return await readSourceIngestStream(
+      `/notebooks/${notebookId}/sources/url/stream`,
+      { url },
+      onProgress,
+    );
+  } catch (e) {
+    console.warn("URL stream unavailable. Falling back to non-stream add.", e);
+    return addUrl(notebookId, url);
+  }
+}
+
 export async function addNote(
   notebookId: string,
   title: string,
@@ -316,7 +411,7 @@ export async function loadExample(
       return {
         source_id: data.source_id,
         name: data.name,
-        type: "pdf",
+        type: data.type || "file",
         status: data.status,
         pipeline_job_id: data.pipeline_job_id,
       };
@@ -397,10 +492,28 @@ export async function uploadFile(
     return {
       source_id: "src_" + Math.random().toString(36).substring(2, 8),
       name: file.name,
-      type: "pdf",
+      type: file.name.split(".").pop()?.toLowerCase() || "file",
       status: "processing",
       pipeline_job_id: jobId,
     };
+  }
+}
+
+export async function addNoteStream(
+  notebookId: string,
+  title: string,
+  content: string,
+  onProgress: Parameters<typeof readSourceIngestStream>[2],
+) {
+  try {
+    return await readSourceIngestStream(
+      `/notebooks/${notebookId}/sources/note/stream`,
+      { title, content },
+      onProgress,
+    );
+  } catch (e) {
+    console.warn("Note stream unavailable. Falling back to non-stream add.", e);
+    return addNote(notebookId, title, content);
   }
 }
 
@@ -770,6 +883,7 @@ export async function askChat(
   chatHistory: any[] = [],
   onChunk?: (chunk: string) => void,
   onMetadata?: (metadata: any) => void,
+  rerank: boolean = true,
 ): Promise<ChatResponse> {
   try {
     const res = await fetch(`${BASE_URL}/notebooks/${notebookId}/chat`, {
@@ -779,6 +893,7 @@ export async function askChat(
         user_prompt: message,
         conversation_history: chatHistory,
         stream: !!onChunk,
+        rerank: rerank,
       }),
     });
     if (res.ok) {
