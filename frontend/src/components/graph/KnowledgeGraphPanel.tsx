@@ -73,6 +73,8 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
     [],
   );
   const prevNodeIdsRef = useRef<string[]>([]);
+  const hasActiveHighlight =
+    highlightPath.node_ids.length > 0 || newlyIngestedNodeIds.length > 0;
 
   // Group node colors
   const groupColors: Record<string, string> = {
@@ -227,7 +229,11 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
       if (hasActiveHighlight) {
         if (isHighlighted) {
           color = colorForGroup(group); // Keep its beautiful original category color
-          val = isSelected ? 3.0 : isReasoningHighlighted || isIngestedHighlighted ? 2.5 : 2.0;
+          val = isSelected
+            ? 3.0
+            : isReasoningHighlighted || isIngestedHighlighted
+              ? 2.5
+              : 2.0;
         } else {
           // Dim non-highlighted nodes softly
           color = "rgba(71, 85, 105, 0.15)";
@@ -595,11 +601,15 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
           linkDirectionalArrowColor={(link: any) => link.color}
           linkDirectionalArrowRelPos={1.0}
           // Highlighting particles! pulsing directional dots moving on paths
-          linkDirectionalParticles={(link: any) => (link.width > 1.5 ? 5 : 0)}
-          linkDirectionalParticleWidth={(link: any) =>
-            link.width > 1.5 ? 3.0 : 0
+          linkDirectionalParticles={(link: any) =>
+            hasActiveHighlight && link.width > 1.5 ? 5 : 0
           }
-          linkDirectionalParticleSpeed={(link: any) => 0.015}
+          linkDirectionalParticleWidth={(link: any) =>
+            hasActiveHighlight && link.width > 1.5 ? 3.0 : 0
+          }
+          linkDirectionalParticleSpeed={(link: any) =>
+            hasActiveHighlight && link.width > 1.5 ? 0.015 : 0
+          }
           linkDirectionalParticleColor={(link: any) => link.color} // Pulsing light follows link color (blue/green)
         />
 
