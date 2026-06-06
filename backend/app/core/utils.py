@@ -670,17 +670,17 @@ def priority_limit_async_func_call(
                     llm_timeout * 2 + 15
                 )  # Reserved timeout buffer for health check phase
 
-        queue = asyncio.PriorityQueue(maxsize=max_queue_size)
+        queue = None
         tasks = set()
-        initialization_lock = asyncio.Lock()
+        initialization_lock = None
         counter = 0
-        shutdown_event = asyncio.Event()
+        shutdown_event = None
         initialized = False
         worker_health_check_task = None
 
         # Enhanced task state management
         task_states = {}  # task_id -> TaskState
-        task_states_lock = asyncio.Lock()
+        task_states_lock = None
         active_futures = weakref.WeakSet()
         reinit_count = 0
 
@@ -848,7 +848,23 @@ def priority_limit_async_func_call(
 
         async def ensure_workers():
             """Ensure worker system is initialized with enhanced error handling"""
-            nonlocal initialized, worker_health_check_task, tasks, reinit_count
+            nonlocal \
+                initialized, \
+                worker_health_check_task, \
+                tasks, \
+                reinit_count, \
+                queue, \
+                shutdown_event, \
+                task_states_lock, \
+                initialization_lock
+
+            # Lazily initialize lock using currently running event loop
+            if initialization_lock is None:
+                import threading
+
+                with threading.Lock():
+                    if initialization_lock is None:
+                        initialization_lock = asyncio.Lock()
 
             if initialized:
                 return
@@ -856,6 +872,12 @@ def priority_limit_async_func_call(
             async with initialization_lock:
                 if initialized:
                     return
+
+                # Lazily initialize remaining async primitives under the active loop
+                if queue is None:
+                    queue = asyncio.PriorityQueue(maxsize=max_queue_size)
+                    shutdown_event = asyncio.Event()
+                    task_states_lock = asyncio.Lock()
 
                 if reinit_count > 0:
                     reinit_count += 1
@@ -907,7 +929,8 @@ def priority_limit_async_func_call(
             """Gracefully shut down all workers and cleanup resources"""
             logger.info(f"{queue_name}: Shutting down priority queue workers")
 
-            shutdown_event.set()
+            if shutdown_event is not None:
+                shutdown_event.set()
 
             # Cancel all active futures
             for future in list(active_futures):
@@ -915,19 +938,21 @@ def priority_limit_async_func_call(
                     future.cancel()
 
             # Cancel all pending tasks
-            async with task_states_lock:
-                for task_id, task_state in list(task_states.items()):
-                    if not task_state.future.done():
-                        task_state.future.cancel()
-                task_states.clear()
+            if task_states_lock is not None:
+                async with task_states_lock:
+                    for task_id, task_state in list(task_states.items()):
+                        if not task_state.future.done():
+                            task_state.future.cancel()
+                    task_states.clear()
 
             # Wait for queue to empty with timeout
-            try:
-                await asyncio.wait_for(queue.join(), timeout=5.0)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"{queue_name}: Timeout waiting for queue to empty during shutdown"
-                )
+            if queue is not None:
+                try:
+                    await asyncio.wait_for(queue.join(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"{queue_name}: Timeout waiting for queue to empty during shutdown"
+                    )
 
             # Cancel worker tasks
             for task in list(tasks):
