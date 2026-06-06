@@ -2669,8 +2669,9 @@ def create_document_routes(
                 {"name": "document_understanding", "status": "pending"},
                 {"name": "vector_graph_sync", "status": "pending"},
             ]
-            # Generate temporary job id
-            job_id = f"job_upload_{generate_track_id('job')[:6]}"
+            # Generate a full unique job id. Short ids caused parallel upload streams
+            # to observe each other's progress and duplicate UI updates.
+            job_id = f"job_upload_{generate_track_id('job')}"
             yield f"{json.dumps({'job_id': job_id, 'status': 'processing', 'steps': init_steps})}\n"
 
             # 2. Resolve target RAG instance and input directory
@@ -2864,18 +2865,18 @@ def create_document_routes(
                     cleaned = sanitize_log_message(cleaned)
 
                     if "Completed merging" in cleaned or "Completed processing file" in cleaned or "Enqueued document processing pipeline stopped" in cleaned:
-                        return "Indexing completed successfully.", 100
+                        return "Knowledge graph sync complete", 100
                     if "Phase 3:" in cleaned:
-                        return "Finalizing indexed knowledge...", 95
+                        return "Finalizing graph sync", 95
                     if "Phase 2: Processing" in cleaned:
                         match = re.search(
                             r"Phase 2:\s*Processing\s*(\d+)\s*relations", cleaned
                         )
                         n = match.group(1) if match else ""
                         return (
-                            f"Mapping {n} relationship links..."
+                            f"Mapping {n} relationship links"
                             if n
-                            else "Mapping relationship links...",
+                            else "Mapping relationship links",
                             90,
                         )
                     if "Phase 1: Processing" in cleaned:
@@ -2884,13 +2885,13 @@ def create_document_routes(
                         )
                         n = match.group(1) if match else ""
                         return (
-                            f"Exploring {n} discovered entities..."
+                            f"Exploring {n} discovered entities"
                             if n
-                            else "Exploring discovered entities...",
+                            else "Exploring discovered entities",
                             85,
                         )
                     if "Enriched" in cleaned or "returned enriched content" in cleaned:
-                        return "Sync orchestration started...", 80
+                        return "Starting graph sync", 80
                     if "Chunk " in cleaned and " extracted " in cleaned:
                         match = re.search(
                             r"Chunk\s+(\d+)\s+of\s+(\d+)\s+extracted\s+(\d+)\s+Ent\s+\+\s+(\d+)\s+Rel",
@@ -2902,10 +2903,10 @@ def create_document_routes(
                                 (int(cur) / max(int(total), 1)) * 10
                             )
                             return (
-                                f"Semantic extraction chunk {cur}/{total}: {ent} entities + {rel} relations",
+                                f"Chunk {cur}/{total} · {ent} entities · {rel} relations",
                                 82 + chunk_percent,
                             )
-                        return "Sync orchestration running...", 84
+                        return "Extracting semantic chunks", 84
                     if "google_genai.models: AFC is enabled" in cleaned:
                         return "Connecting to Gemini LLM...", 78
                     if "LLM func:" in cleaned and "workers initialized" in cleaned:
@@ -2913,13 +2914,13 @@ def create_document_routes(
                     if "== LLM cache == saving" in cleaned:
                         return "Caching semantic extraction results...", 79
                     if "Merging stage" in cleaned:
-                        return "Merging knowledge graph updates...", 81
+                        return "Merging graph updates", 81
                     if "Merged:" in cleaned or "LLMmrg:" in cleaned:
                         match = re.search(r"(?:Merged|LLMmrg):\s*`([^`]+)`", cleaned)
-                        msg = f"Aligning entity '{match.group(1)}'..." if match else "Aligning extracted entities..."
+                        msg = f"Aligning entity {match.group(1)}" if match else "Aligning extracted entities"
                         return msg, 88
                     if "In memory DB persist to disk" in cleaned:
-                        return "Saving graph database to disk...", 98
+                        return "Persisting graph updates", 98
                     if "Starting crawl" in cleaned or "crawl" in cleaned.lower():
                         return "Crawling web page content...", 10
                     return None
@@ -3067,7 +3068,7 @@ def create_document_routes(
                         steps = [
                             {"name": s[0], "status": "done"} for s in step_definitions
                         ]
-                        progress_msg = "Indexing completed successfully."
+                        progress_msg = "Knowledge graph sync complete"
                         if workspace:
                             await chat_history_db.update_notebook_status(
                                 workspace,
@@ -3076,7 +3077,7 @@ def create_document_routes(
                             )
                     elif any_failed_real:
                         status = "failed"
-                        progress_msg = "Processing failed: " + error_msg
+                        progress_msg = "Processing failed"
                         if workspace:
                             await chat_history_db.update_notebook_status(
                                 workspace, status="ready"
@@ -3158,7 +3159,7 @@ def create_document_routes(
                         }
                     )
                 if error_msg:
-                    yield_payload["error"] = error_msg
+                    yield_payload["error"] = sanitize_log_message(error_msg)
 
                 yield f"{json.dumps(yield_payload)}\n"
 

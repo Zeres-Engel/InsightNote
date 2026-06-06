@@ -19,6 +19,7 @@ export interface CitationItem {
 export interface GraphPath {
   node_ids: string[];
   link_ids: string[];
+  mode?: "ingest" | "query" | "manual";
 }
 
 export interface ChatRequest {

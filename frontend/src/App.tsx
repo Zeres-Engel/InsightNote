@@ -23,6 +23,40 @@ import {
 } from "./lib/types";
 import * as api from "./lib/api";
 
+const sourceIdentityKey = (source: SourceListItem) =>
+  `${source.type}:${(source.name || "").trim().toLowerCase()}`;
+
+const sourcePriority = (source: SourceListItem) => {
+  let priority = 0;
+  if (!source.id.includes("_temp_")) priority += 1000;
+  if (source.status === "ready") priority += 500;
+  if (source.status === "processing") priority += 100;
+  priority += (source.entity_count || 0) * 2;
+  priority += source.chunk_count || 0;
+  return priority;
+};
+
+const dedupeSources = (items: SourceListItem[]) => {
+  const byId = new Map<string, SourceListItem>();
+  for (const item of items) {
+    const existing = byId.get(item.id);
+    if (!existing || sourcePriority(item) >= sourcePriority(existing)) {
+      byId.set(item.id, item);
+    }
+  }
+
+  const byIdentity = new Map<string, SourceListItem>();
+  for (const item of byId.values()) {
+    const key = sourceIdentityKey(item);
+    const existing = byIdentity.get(key);
+    if (!existing || sourcePriority(item) >= sourcePriority(existing)) {
+      byIdentity.set(key, item);
+    }
+  }
+
+  return Array.from(byIdentity.values());
+};
+
 export default function App() {
   // State definitions
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
@@ -42,6 +76,7 @@ export default function App() {
   });
   const graphDataRef = useRef<GraphResponse>({ nodes: [], links: [] });
   const sourcesRef = useRef<SourceListItem[]>([]);
+  const workspaceRefreshTimerRef = useRef<number | null>(null);
   const [highlightPath, setHighlightPath] = useState<GraphPath>({
     node_ids: [],
     link_ids: [],
@@ -53,6 +88,53 @@ export default function App() {
     Record<string, PipelineJobResponse>
   >({});
   const [activeJobIds, setActiveJobIds] = useState<string[]>([]);
+
+  const scheduleWorkspaceRefreshAfterIngest = (delayMs = 700) => {
+    if (!activeNotebook) return;
+    const notebookId = activeNotebook.id;
+    if (workspaceRefreshTimerRef.current) {
+      window.clearTimeout(workspaceRefreshTimerRef.current);
+    }
+    workspaceRefreshTimerRef.current = window.setTimeout(async () => {
+      const [updatedSources, updatedGraph] = await Promise.all([
+        api.listSources(notebookId),
+        api.getGraph(notebookId),
+      ]);
+      const previousGraph = graphDataRef.current;
+      const previousNodeIds = new Set(previousGraph.nodes.map((node) => node.id));
+      const previousLinkIds = new Set(previousGraph.links.map((link) => link.id));
+      const newNodeIds = updatedGraph.nodes
+        .filter((node) => !previousNodeIds.has(node.id))
+        .slice(0, 35)
+        .map((node) => node.id);
+      const newLinkIds = updatedGraph.links
+        .filter((link) => !previousLinkIds.has(link.id))
+        .slice(0, 60)
+        .map((link) => link.id);
+
+      const cleanSources = dedupeSources(updatedSources);
+      setSources(cleanSources);
+      setGraphData(updatedGraph);
+      setNotebooks((prev) =>
+        prev.map((nb) =>
+          nb.id === notebookId
+            ? {
+                ...nb,
+                source_count: cleanSources.length,
+                status: cleanSources.length > 0 ? "ready" : "empty",
+              }
+            : nb,
+        ),
+      );
+      if (newNodeIds.length > 0 || newLinkIds.length > 0) {
+        setHighlightPath({
+          node_ids: newNodeIds,
+          link_ids: newLinkIds,
+          mode: "ingest",
+        });
+      }
+    }, delayMs);
+  };
 
   // Responsive Layout States
   const [showSources, setShowSources] = useState(true);
@@ -177,8 +259,11 @@ export default function App() {
             next[key] = normalizedStatus;
             next[jobId] = normalizedStatus;
 
-            // Highlight newly enqueued nodes and links in real-time during polling
-            if (status.extracted_nodes && status.extracted_nodes.length > 0) {
+            if (
+              isPipelineTerminal(normalizedStatus) &&
+              status.extracted_nodes &&
+              status.extracted_nodes.length > 0
+            ) {
               const previousGraph = graphDataRef.current;
               const previousNodeIds = new Set(
                 previousGraph.nodes.map((node) => node.id),
@@ -219,6 +304,7 @@ export default function App() {
                 setHighlightPath({
                   node_ids: nodeIds,
                   link_ids: linkKeyIds,
+                  mode: "ingest",
                 });
               }
             }
@@ -258,7 +344,7 @@ export default function App() {
             .slice(0, 60)
             .map((link) => link.id);
 
-          setSources(updatedSources);
+          setSources(dedupeSources(updatedSources));
           setGraphData(updatedGraph);
           setNotebooks((prev) =>
             prev.map((nb) =>
@@ -272,7 +358,7 @@ export default function App() {
             ),
           );
           if (newNodeIds.length > 0 || newLinkIds.length > 0) {
-            setHighlightPath({ node_ids: newNodeIds, link_ids: newLinkIds });
+            setHighlightPath({ node_ids: newNodeIds, link_ids: newLinkIds, mode: "ingest" });
           }
         }
       } catch (e) {
@@ -311,7 +397,7 @@ export default function App() {
       setSourcesLoading(true);
       try {
         const sourceList = await api.listSources(activeNotebook.id);
-        setSources(sourceList);
+        setSources(dedupeSources(sourceList));
 
         const graph = await api.getGraph(activeNotebook.id);
         setGraphData(graph);
@@ -432,7 +518,7 @@ export default function App() {
         entity_count: 0,
         chunk_count: 0,
       };
-      setSources((prev) => [pendingSource, ...prev]);
+      setSources((prev) => dedupeSources([pendingSource, ...prev]));
 
       const response = await api.addUrlStream(
         activeNotebook.id,
@@ -445,43 +531,45 @@ export default function App() {
             [sourceId]: progress,
           }));
           if (progress.source_id) {
+            const progressedSource: SourceListItem = {
+              id: progress.source_id,
+              name: progress.name || url,
+              type: progress.type || "url",
+              status: progress.status,
+              entity_count: 0,
+              chunk_count: 0,
+              pipeline_job_id: progress.job_id,
+            };
             setSources((prev) =>
-              prev.map((src) =>
-                src.id === tempSourceId
-                  ? {
-                      ...src,
-                      id: progress.source_id as string,
-                      name: progress.name || url,
-                      type: progress.type || "url",
-                      status: progress.status,
-                      pipeline_job_id: progress.job_id,
-                    }
-                  : src,
-              ),
+              dedupeSources([
+                progressedSource,
+                ...prev.filter(
+                  (src) =>
+                    src.id !== tempSourceId && src.id !== progress.source_id,
+                ),
+              ]),
             );
-          }
-          if (progress.graph_changed && progress.new_node_ids?.length) {
-            setHighlightPath({
-              node_ids: progress.new_node_ids,
-              link_ids: progress.new_link_ids || [],
-            });
           }
         },
       );
 
+      const finalSource: SourceListItem = {
+        id: response.source_id,
+        name: response.name,
+        type: response.type,
+        status: response.status,
+        entity_count: 0,
+        chunk_count: 0,
+        pipeline_job_id: response.pipeline_job_id,
+      };
       setSources((prev) =>
-        prev.map((src) =>
-          src.id === tempSourceId || src.id === response.source_id
-            ? {
-                ...src,
-                id: response.source_id,
-                name: response.name,
-                type: response.type,
-                status: response.status,
-                pipeline_job_id: response.pipeline_job_id,
-              }
-            : src,
-        ),
+        dedupeSources([
+          finalSource,
+          ...prev.filter(
+            (src) =>
+              src.id !== tempSourceId && src.id !== response.source_id,
+          ),
+        ]),
       );
 
       const [updatedSources, updatedGraph] = await Promise.all([
@@ -503,11 +591,20 @@ export default function App() {
         .filter((link) => !previousLinkIds.has(link.id))
         .slice(0, 60)
         .map((link) => link.id);
-      setSources(updatedSources);
+      setSources(dedupeSources(updatedSources));
       setGraphData(updatedGraph);
       if (newNodeIds.length > 0 || newLinkIds.length > 0) {
-        setHighlightPath({ node_ids: newNodeIds, link_ids: newLinkIds });
+        setHighlightPath({ node_ids: newNodeIds, link_ids: newLinkIds, mode: "ingest" });
       }
+      setPipelineJobs((prev) => {
+        const next = { ...prev };
+        delete next[tempSourceId];
+        delete next[response.source_id];
+        if (response.pipeline_job_id) {
+          delete next[response.pipeline_job_id];
+        }
+        return next;
+      });
     } catch (e) {
       console.error("Failed to add URL source", e);
       setSources((prev) => prev.filter((src) => src.id !== tempSourceId));
@@ -536,7 +633,7 @@ export default function App() {
         entity_count: 0,
         chunk_count: 0,
       };
-      setSources((prev) => [pendingSource, ...prev]);
+      setSources((prev) => dedupeSources([pendingSource, ...prev]));
 
       const response = await api.addNoteStream(
         activeNotebook.id,
@@ -550,43 +647,45 @@ export default function App() {
             [sourceId]: progress,
           }));
           if (progress.source_id) {
+            const progressedSource: SourceListItem = {
+              id: progress.source_id,
+              name: progress.name || title,
+              type: progress.type || "text",
+              status: progress.status,
+              entity_count: 0,
+              chunk_count: 0,
+              pipeline_job_id: progress.job_id,
+            };
             setSources((prev) =>
-              prev.map((src) =>
-                src.id === tempSourceId
-                  ? {
-                      ...src,
-                      id: progress.source_id as string,
-                      name: progress.name || title,
-                      type: progress.type || "text",
-                      status: progress.status,
-                      pipeline_job_id: progress.job_id,
-                    }
-                  : src,
-              ),
+              dedupeSources([
+                progressedSource,
+                ...prev.filter(
+                  (src) =>
+                    src.id !== tempSourceId && src.id !== progress.source_id,
+                ),
+              ]),
             );
-          }
-          if (progress.graph_changed && progress.new_node_ids?.length) {
-            setHighlightPath({
-              node_ids: progress.new_node_ids,
-              link_ids: progress.new_link_ids || [],
-            });
           }
         },
       );
 
+      const finalSource: SourceListItem = {
+        id: response.source_id,
+        name: response.name,
+        type: response.type,
+        status: response.status,
+        entity_count: 0,
+        chunk_count: 0,
+        pipeline_job_id: response.pipeline_job_id,
+      };
       setSources((prev) =>
-        prev.map((src) =>
-          src.id === tempSourceId || src.id === response.source_id
-            ? {
-                ...src,
-                id: response.source_id,
-                name: response.name,
-                type: response.type,
-                status: response.status,
-                pipeline_job_id: response.pipeline_job_id,
-              }
-            : src,
-        ),
+        dedupeSources([
+          finalSource,
+          ...prev.filter(
+            (src) =>
+              src.id !== tempSourceId && src.id !== response.source_id,
+          ),
+        ]),
       );
 
       const [updatedSources, updatedGraph] = await Promise.all([
@@ -608,14 +707,15 @@ export default function App() {
         .filter((link) => !previousLinkIds.has(link.id))
         .slice(0, 60)
         .map((link) => link.id);
-      setSources(updatedSources);
+      setSources(dedupeSources(updatedSources));
       setGraphData(updatedGraph);
       if (newNodeIds.length > 0 || newLinkIds.length > 0) {
-        setHighlightPath({ node_ids: newNodeIds, link_ids: newLinkIds });
+        setHighlightPath({ node_ids: newNodeIds, link_ids: newLinkIds, mode: "ingest" });
       }
       setPipelineJobs((prev) => {
         const next = { ...prev };
         delete next[tempSourceId];
+        delete next[response.source_id];
         if (response.pipeline_job_id) {
           delete next[response.pipeline_job_id];
         }
@@ -644,7 +744,7 @@ export default function App() {
         chunk_count: 0,
         pipeline_job_id: response.pipeline_job_id,
       };
-      setSources((prev) => [pendingSource, ...prev]);
+      setSources((prev) => dedupeSources([pendingSource, ...prev]));
 
       if (response.pipeline_job_id) {
         trackPipelineJob(response.pipeline_job_id);
@@ -675,7 +775,7 @@ export default function App() {
         entity_count: 0,
         chunk_count: 0,
       };
-      setSources((prev) => [pendingSource, ...prev]);
+      setSources((prev) => dedupeSources([pendingSource, ...prev]));
 
       const response = await api.uploadFileStream(
         activeNotebook.id,
@@ -686,23 +786,22 @@ export default function App() {
             ...prev,
             [tempSourceId]: progress,
           }));
-          // Highlight new nodes/links in real-time during upload processing
-          if (progress.new_node_ids?.length || progress.new_link_ids?.length) {
-            setHighlightPath({
-              node_ids: progress.new_node_ids || [],
-              link_ids: progress.new_link_ids || [],
-            });
-          }
         },
       );
 
       // Replace temporary source with enqueued source
       setSources((prev) =>
-        prev.map((src) =>
-          src.id === tempSourceId
-            ? { ...src, id: response.source_id, status: response.status }
-            : src,
-        ),
+        dedupeSources([
+          {
+            ...pendingSource,
+            id: response.source_id,
+            status: response.status,
+          },
+          ...prev.filter(
+            (src) =>
+              src.id !== tempSourceId && src.id !== response.source_id,
+          ),
+        ]),
       );
 
       // Transfer progress mapping from tempSourceId to the real source_id
@@ -715,41 +814,8 @@ export default function App() {
         return next;
       });
 
-      // Once upload stream finishes, trigger final sync
-      const updatedSources = await api.listSources(activeNotebook.id);
-      setSources(updatedSources);
-
-      const updatedGraph = await api.getGraph(activeNotebook.id);
-      const previousGraph = graphDataRef.current;
-      const previousNodeIds = new Set(
-        previousGraph.nodes.map((node) => node.id),
-      );
-      const previousLinkIds = new Set(
-        previousGraph.links.map((link) => link.id),
-      );
-      const newNodeIds = updatedGraph.nodes
-        .filter((node) => !previousNodeIds.has(node.id))
-        .slice(0, 35)
-        .map((node) => node.id);
-      const newLinkIds = updatedGraph.links
-        .filter((link) => !previousLinkIds.has(link.id))
-        .slice(0, 60)
-        .map((link) => link.id);
-      setGraphData(updatedGraph);
-      if (newNodeIds.length > 0 || newLinkIds.length > 0) {
-        setHighlightPath({ node_ids: newNodeIds, link_ids: newLinkIds });
-      }
-      setNotebooks((prev) =>
-        prev.map((nb) =>
-          nb.id === activeNotebook.id
-            ? {
-                ...nb,
-                source_count: updatedSources.length,
-                status: updatedSources.length > 0 ? "ready" : "empty",
-              }
-            : nb,
-        ),
-      );
+      // Debounced final sync. Multiple parallel uploads coalesce into one sources/graph refresh.
+      scheduleWorkspaceRefreshAfterIngest(900);
 
       // Clear the job progress state after 3 seconds
       setTimeout(() => {
@@ -849,7 +915,7 @@ export default function App() {
             meta.graph_path.node_ids &&
             meta.graph_path.node_ids.length > 0
           ) {
-            setHighlightPath(meta.graph_path);
+            setHighlightPath({ ...meta.graph_path, mode: "query" });
           } else {
             setHighlightPath({ node_ids: [], link_ids: [] });
           }
@@ -876,7 +942,7 @@ export default function App() {
 
       // 4. Highlight path in 3D Graph (if path exists)
       if (response.graph_path && response.graph_path.node_ids.length > 0) {
-        setHighlightPath(response.graph_path);
+        setHighlightPath({ ...response.graph_path, mode: "query" });
       } else {
         // Clear highlight if query had no specific reasoning path
         setHighlightPath({ node_ids: [], link_ids: [] });

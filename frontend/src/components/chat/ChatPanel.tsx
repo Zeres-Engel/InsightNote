@@ -472,17 +472,10 @@ const MessageBubble: React.FC<{ message: ChatMessage }> = ({ message }) => {
                 isStreaming={message.isStreaming}
               />
             ) : (
-              /* GORGEOUS SHIMMERING SKELETON LOADING STATE INSIDE BUBBLE */
-              <div className="space-y-2.5 py-1.5 animate-pulse min-w-[240px] max-w-[320px]">
-                <div className="flex items-center gap-2 text-indigo-400 mb-2">
-                  <Sparkles className="w-3.5 h-3.5 animate-spin-slow" />
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-400">
-                    AI is reasoning...
-                  </span>
-                </div>
-                <div className="h-2 bg-slate-800/80 rounded w-[95%]" />
-                <div className="h-2 bg-slate-800/60 rounded w-[80%]" />
-                <div className="h-2 bg-slate-800/40 rounded w-[55%]" />
+              <div className="flex items-center gap-1.5 py-1 min-w-[56px]">
+                <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.3s]" />
+                <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.15s]" />
+                <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" />
               </div>
             )
           ) : (
@@ -530,26 +523,32 @@ const MessageBubble: React.FC<{ message: ChatMessage }> = ({ message }) => {
               Grounded Citations
             </div>
             <div className="grid grid-cols-1 gap-2">
-              {message.citations.map((cite, idx) => (
-                <div
-                  key={idx}
-                  className="p-3 bg-slate-900/20 border border-slate-950/40 hover:border-slate-850 rounded-xl hover:bg-slate-900/40 transition-all duration-200 shadow-sm"
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-xs font-bold text-slate-350 flex items-center gap-1 truncate">
-                      {cite.title}
-                    </span>
-                    <span className="text-[9px] bg-emerald-950/60 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-900/40 font-bold flex-shrink-0">
-                      {cite.score > 0
-                        ? `Match: ${Math.round(cite.score * 100)}%`
-                        : "Retrieved"}
-                    </span>
+              {message.citations.map((cite, idx) => {
+                const title =
+                  (cite.title || "").trim() ||
+                  (cite.source_id?.startsWith("http") ? cite.source_id : "") ||
+                  "Source Document";
+                return (
+                  <div
+                    key={idx}
+                    className="p-3 bg-slate-900/20 border border-slate-950/40 hover:border-slate-850 rounded-xl hover:bg-slate-900/40 transition-all duration-200 shadow-sm"
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-bold text-slate-350 flex items-center gap-1 truncate">
+                        {title}
+                      </span>
+                      <span className="text-[9px] bg-emerald-950/60 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-900/40 font-bold flex-shrink-0">
+                        {cite.score > 0
+                          ? `Match: ${Math.round(cite.score * 100)}%`
+                          : "Retrieved"}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 leading-relaxed italic border-l border-slate-800 pl-2">
+                      "{cite.text}"
+                    </p>
                   </div>
-                  <p className="text-[11px] text-slate-400 leading-relaxed italic border-l border-slate-800 pl-2">
-                    "{cite.text}"
-                  </p>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}

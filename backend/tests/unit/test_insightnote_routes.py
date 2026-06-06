@@ -455,3 +455,21 @@ def test_ask_notebook_chat_metadata_security_filter(client, mock_rag, monkeypatc
     link_meta = data["links_metadata"][0]
     assert link_meta["source"] == "A"
     assert "source_id" not in link_meta["properties"]
+
+
+def test_url_citation_title_uses_doc_status_summary():
+    """URL citations should display the crawled page title, not a generic fallback."""
+    from app.api.routers.insightnote_routes import _citation_title_from_reference
+
+    source_titles = {
+        "https://contest.nypc.co.kr/": "NYPC",
+        "https://contest.nypc.co.kr": "NYPC",
+    }
+
+    title = _citation_title_from_reference(
+        {"reference_id": "3"},
+        "https://contest.nypc.co.kr/",
+        source_titles,
+    )
+
+    assert title == "NYPC"

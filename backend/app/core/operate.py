@@ -4149,11 +4149,17 @@ async def _build_context_str(
 
     import os
 
+    def _reference_display_name(file_path: str) -> str:
+        value = str(file_path or "").strip()
+        if value.startswith(("http://", "https://")):
+            return value
+        return os.path.basename(value.rstrip("\\/")) or value or "Source Document"
+
     text_units_str = "\n".join(
         json.dumps(text_unit, ensure_ascii=False) for text_unit in chunks_context
     )
     reference_list_str = "\n".join(
-        f"[{ref['reference_id']}] {os.path.basename(ref['file_path'])}"
+        f"[{ref['reference_id']}] {_reference_display_name(ref['file_path'])}"
         for ref in reference_list
         if ref["reference_id"]
     )
@@ -5092,11 +5098,17 @@ async def naive_query(
 
     import os
 
+    def _reference_display_name(file_path: str) -> str:
+        value = str(file_path or "").strip()
+        if value.startswith(("http://", "https://")):
+            return value
+        return os.path.basename(value.rstrip("\\/")) or value or "Source Document"
+
     text_units_str = "\n".join(
         json.dumps(text_unit, ensure_ascii=False) for text_unit in chunks_context
     )
     reference_list_str = "\n".join(
-        f"[{ref['reference_id']}] {os.path.basename(ref['file_path'])}"
+        f"[{ref['reference_id']}] {_reference_display_name(ref['file_path'])}"
         for ref in reference_list
         if ref["reference_id"]
     )

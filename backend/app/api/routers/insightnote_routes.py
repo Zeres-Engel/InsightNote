@@ -330,17 +330,86 @@ async def _scrape_url_to_markdown(url: str, clean_name: str) -> str:
 def _filter_citations_to_answer(
     answer: str, citations: List["CitationItem"]
 ) -> List["CitationItem"]:
-    """Keep only citations explicitly referenced in the answer as [1], [2], etc."""
+    """Keep only citations explicitly referenced or named in the final answer."""
     if not citations:
         return []
+    answer_text = answer or ""
+    answer_lower = answer_text.lower()
     referenced_indexes = []
-    for match in re.finditer(r"\[(\d+)\]", answer or ""):
+    for match in re.finditer(r"\[(\d+)\]", answer_text):
         index = int(match.group(1)) - 1
         if 0 <= index < len(citations) and index not in referenced_indexes:
             referenced_indexes.append(index)
     if referenced_indexes:
         return [citations[index] for index in referenced_indexes]
+
+    named_citations: List["CitationItem"] = []
+    for citation in citations:
+        title = (citation.title or "").strip()
+        if not title:
+            continue
+        title_lower = title.lower()
+        stem_lower = os.path.splitext(os.path.basename(title_lower))[0]
+        if title_lower in answer_lower or (stem_lower and stem_lower in answer_lower):
+            named_citations.append(citation)
+    if named_citations:
+        return named_citations
+
+    # Fallback: if no citations are named or referenced with [1], [2],
+    # return the top 3 retrieved citations to guarantee grounded context
     return citations[: min(3, len(citations))]
+
+
+def _source_title_from_summary(summary: str) -> str:
+    if not summary:
+        return ""
+    first_line = next(
+        (line.strip() for line in str(summary).splitlines() if line.strip()),
+        "",
+    )
+    return re.sub(r"^#+\s*", "", first_line).strip()
+
+
+def _citation_title_from_reference(
+    ref: Dict[str, Any], file_path: str, source_titles: Optional[Dict[str, str]] = None
+) -> str:
+    """Return a clean user-facing citation title without leaking local paths."""
+    source_titles = source_titles or {}
+    normalized_path = str(file_path or "").strip()
+    for key in {
+        normalized_path,
+        normalized_path.rstrip("/"),
+        normalized_path.rstrip("\\/"),
+    }:
+        title = source_titles.get(key)
+        if title:
+            return title
+
+    candidates = [
+        ref.get("title"),
+        ref.get("source_title"),
+        ref.get("file_name"),
+        ref.get("filename"),
+        ref.get("name"),
+        ref.get("url"),
+        ref.get("source_url"),
+        ref.get("source"),
+        file_path,
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        value = str(candidate).strip()
+        if not value:
+            continue
+        if value.startswith(("http://", "https://")):
+            return value
+        cleaned = os.path.basename(value.rstrip("\\/")).strip()
+        if cleaned:
+            return cleaned
+        if value:
+            return value
+    return "Source Document"
 
 
 def _sanitize_string(text: str) -> str:
@@ -1652,7 +1721,9 @@ def create_insightnote_routes(
                             f"MATCH (n:`{workspace_label}`) WHERE n.source_id IN $doc_ids RETURN n",
                             doc_ids=doc_ids,
                         )
-                        real_nodes = [record["n"] for record in await n_res.all()]
+                        real_nodes = []
+                        async for record in n_res:
+                            real_nodes.append(record["n"])
 
                         # Fetch relations belonging to these processed doc_ids only
                         e_res = await session.run(
@@ -1660,7 +1731,7 @@ def create_insightnote_routes(
                             doc_ids=doc_ids,
                         )
                         real_edges = []
-                        for record in await e_res.all():
+                        async for record in e_res:
                             edge = dict(record["r"])
                             edge["source"] = record["source"]
                             edge["target"] = record["target"]
@@ -2598,7 +2669,9 @@ def create_insightnote_routes(
                 RETURN r, n, m
                 """
                 res = await session.run(query, node_id=node_id)
-                records = await res.all()
+                records = []
+                async for record in res:
+                    records.append(record)
 
                 nodes_dict = {}
                 links = []
@@ -3001,11 +3074,57 @@ def create_insightnote_routes(
                     param.stream = True
                 result = await notebook_rag.aquery_llm(prompt_message, param=param)
 
+                source_titles_by_path: Dict[str, str] = {}
+                try:
+                    source_docs, _ = await notebook_rag.doc_status.get_docs_paginated(
+                        status_filter=None, page=1, page_size=200
+                    )
+                    for _, source_doc in source_docs:
+                        source_path = str(getattr(source_doc, "file_path", "") or "")
+                        if not source_path:
+                            continue
+
+                        # Start with the clean base filename as default title
+                        source_title = os.path.basename(source_path)
+
+                        # If this is a URL source, fetch its original crawl URL from metadata!
+                        doc_metadata = getattr(source_doc, "metadata", {}) or {}
+                        if isinstance(doc_metadata, dict) and doc_metadata.get("url"):
+                            source_title = doc_metadata["url"]
+                        else:
+                            # Fallback to parsed content summary title if available and is a real string (avoid MagicMock pollution in tests)
+                            summary_val = ""
+                            if hasattr(source_doc, "content_summary"):
+                                val = getattr(source_doc, "content_summary")
+                                if isinstance(val, str):
+                                    summary_val = val
+                            summary_title = _source_title_from_summary(summary_val)
+                            if summary_title:
+                                source_title = summary_title
+
+                        if not source_title:
+                            continue
+
+                        for key in {
+                            source_path,
+                            source_path.rstrip("/"),
+                            source_path.rstrip("\\/"),
+                        }:
+                            source_titles_by_path[key] = source_title
+                except Exception as title_err:
+                    logger.debug(f"Unable to map source citation titles: {title_err}")
+
                 # Map chunk scores to file paths to get real, dynamic similarity scores for citations
                 file_scores = {}
+                reference_paths: Dict[str, str] = {}
                 retrieved_chunks = result.get("data", {}).get("chunks", [])
-                for chunk in retrieved_chunks:
+                for chunk_index, chunk in enumerate(retrieved_chunks, start=1):
                     fpath = chunk.get("file_path")
+                    ref_id = str(chunk.get("reference_id") or "").strip()
+                    if ref_id and fpath:
+                        reference_paths[ref_id] = fpath
+                    if fpath:
+                        reference_paths.setdefault(str(chunk_index), fpath)
                     # Retrieve the vector search score or similarity metric
                     score = (
                         chunk.get("score")
@@ -3013,19 +3132,23 @@ def create_insightnote_routes(
                         or chunk.get("vector_score")
                     )
                     if fpath and score:
+                        score_value = float(score)
                         file_scores[fpath] = max(
-                            file_scores.get(fpath, 0.0), float(score)
+                            file_scores.get(fpath, 0.0), score_value
                         )
+                        file_scores.setdefault(str(chunk_index), score_value)
 
                 # Map citations
                 references = result.get("data", {}).get("references", [])
                 citations = []
                 for ref in references:
-                    fpath = ref.get("file_path") or ""
+                    ref_id = str(ref.get("reference_id") or "").strip()
+                    fpath = ref.get("file_path") or reference_paths.get(ref_id, "")
                     # Use real retrieval score only. Do not fabricate static 85/90% matches.
                     real_score = file_scores.get(
                         fpath,
-                        ref.get("score")
+                        file_scores.get(ref_id)
+                        or ref.get("score")
                         or ref.get("similarity")
                         or ref.get("vector_score")
                         or 0.0,
@@ -3034,11 +3157,11 @@ def create_insightnote_routes(
                         real_score = 1.0
                     citations.append(
                         CitationItem(
-                            source_id=ref.get("reference_id") or "src_001",
-                            title=os.path.basename(fpath)
-                            if fpath
-                            else "Source Document",
-                            chunk_id=ref.get("reference_id") or "chunk_001",
+                            source_id=ref_id or "src_001",
+                            title=_citation_title_from_reference(
+                                ref, fpath, source_titles_by_path
+                            ),
+                            chunk_id=ref_id or "chunk_001",
                             text=ref.get("content") or "Relevant document segment.",
                             score=real_score,
                         )

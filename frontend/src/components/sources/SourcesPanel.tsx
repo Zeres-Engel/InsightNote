@@ -67,6 +67,20 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
     vector_index: "Qdrant Dense Vector Indexing",
   };
 
+  const sanitizeProgressMessage = (message?: string) => {
+    if (!message) return "";
+    return message
+      .replace(/\bdoc-[a-zA-Z0-9_-]+\b/g, "document")
+      .replace(/\bchunk-[a-zA-Z0-9_-]+\b/g, "chunk")
+      .replace(/\btrack-[a-zA-Z0-9_-]+\b/g, "track")
+      .replace(/\bjob_[a-zA-Z0-9_-]+\b/g, "job")
+      .replace(/\bsource_id\b|\bdoc_id\b|\bchunk_id\b|\btrack_id\b/gi, "source")
+      .replace(/\b[A-Za-z]:\\[^\s]+/g, (match) => match.split(/[\\/]/).pop() || "file")
+      .replace(/^(Vector & Graph Sync Orchestration|Source File Ingestion|Layout-Aware PDF Extraction|Semantic Entity Extraction)\s*:\s*/i, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  };
+
   const toggleJobExpanded = (srcId: string) => {
     setExpandedJobs((prev) => ({ ...prev, [srcId]: !prev[srcId] }));
   };
@@ -411,7 +425,7 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
                     </div>
                     {job && (job.message || job.latest_message) && (
                       <div className="mt-1 text-[10px] font-bold text-violet-400/90 truncate animate-pulse">
-                        {job.message || job.latest_message}
+                        {sanitizeProgressMessage(job.message || job.latest_message)}
                       </div>
                     )}
                     <button

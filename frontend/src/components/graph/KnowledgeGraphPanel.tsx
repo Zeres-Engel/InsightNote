@@ -69,12 +69,10 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
     return () => observer.disconnect();
   }, []);
 
-  const [newlyIngestedNodeIds, setNewlyIngestedNodeIds] = useState<string[]>(
-    [],
-  );
-  const prevNodeIdsRef = useRef<string[]>([]);
-  const hasActiveHighlight =
-    highlightPath.node_ids.length > 0 || newlyIngestedNodeIds.length > 0;
+  const highlightTimerRef = useRef<number | null>(null);
+  const lastHighlightSignatureRef = useRef("");
+  const highlightMode = highlightPath.mode || "query";
+  const hasActiveHighlight = highlightPath.node_ids.length > 0;
 
   // Group node colors
   const groupColors: Record<string, string> = {
@@ -165,7 +163,10 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
   // Adjust nodes/links for the render engine based on highlighting path
   const processedData = useMemo(() => {
     const hasPathHighlight = highlightPath.node_ids.length > 0;
-    const hasIngestHighlight = newlyIngestedNodeIds.length > 0;
+    const hasIngestHighlight =
+      hasPathHighlight && (highlightPath.mode || "query") === "ingest";
+    const hasQueryHighlight =
+      hasPathHighlight && (highlightPath.mode || "query") !== "ingest";
     const selectedNodeId = selectedNode?.id;
     const hasSelectHighlight = !!selectedNodeId;
     const search = searchQuery.trim().toLowerCase();
@@ -194,8 +195,10 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
     );
 
     const nodes = graphData.nodes.map((node) => {
-      const isReasoningHighlighted = activeNodeIds.has(node.id);
-      const isIngestedHighlighted = newlyIngestedNodeIds.includes(node.id);
+      const isReasoningHighlighted =
+        hasQueryHighlight && activeNodeIds.has(node.id);
+      const isIngestedHighlighted =
+        hasIngestHighlight && activeNodeIds.has(node.id);
       const isSelected = selectedNodeId === node.id;
       const isSearchMatched = searchedNodeIds.has(node.id);
 
@@ -228,7 +231,7 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
 
       if (hasActiveHighlight) {
         if (isHighlighted) {
-          color = colorForGroup(group); // Keep its beautiful original category color
+          color = colorForGroup(group);
           val = isSelected
             ? 3.0
             : isReasoningHighlighted || isIngestedHighlighted
@@ -262,9 +265,7 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
         (activeNodeIds.has(String(sourceId)) &&
           activeNodeIds.has(String(targetId)));
 
-      const isIngestLink =
-        newlyIngestedNodeIds.includes(String(sourceId)) ||
-        newlyIngestedNodeIds.includes(String(targetId));
+      const isIngestLink = hasIngestHighlight && isPathLink;
 
       const isSelectedLink =
         hasSelectHighlight &&
@@ -277,7 +278,7 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
           searchedNodeIds.has(String(targetId)));
 
       const isHighlighted =
-        (hasPathHighlight && isPathLink) ||
+        (hasQueryHighlight && isPathLink) ||
         (hasIngestHighlight && isIngestLink) ||
         isSelectedLink ||
         isSearchLink;
@@ -294,7 +295,7 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
           // Search result link: Sky blue (#38bdf8)
           if (hasIngestHighlight && isIngestLink) {
             color = "#10b981";
-          } else if (hasPathHighlight && isPathLink) {
+          } else if (hasQueryHighlight && isPathLink) {
             color = "#38bdf8";
           } else if (isSelectedLink) {
             color = "#6366f1";
@@ -319,68 +320,9 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
   }, [
     graphData,
     highlightPath,
-    newlyIngestedNodeIds,
     searchQuery,
     selectedNode,
   ]);
-
-  // Automatically track newly added nodes on ingestion and pan/glow them
-  useEffect(() => {
-    if (!graphData || !graphData.nodes || graphData.nodes.length === 0) return;
-
-    const currentNodeIds = graphData.nodes.map((n: any) => n.id);
-    const prevNodeIds = prevNodeIdsRef.current;
-
-    if (prevNodeIds.length > 0) {
-      const addedNodeIds = currentNodeIds.filter(
-        (id) => !prevNodeIds.includes(id),
-      );
-
-      if (addedNodeIds.length > 0) {
-        prevNodeIdsRef.current = currentNodeIds;
-        setNewlyIngestedNodeIds(addedNodeIds);
-
-        // Auto-focus camera on the center of newly added nodes after short render delay
-        setTimeout(() => {
-          if (!fgRef.current) return;
-          const newlyAddedNodes = processedData.nodes.filter((n: any) =>
-            addedNodeIds.includes(n.id),
-          );
-
-          if (newlyAddedNodes.length > 0) {
-            let sumX = 0,
-              sumY = 0,
-              sumZ = 0;
-            newlyAddedNodes.forEach((n: any) => {
-              sumX += n.x || 0;
-              sumY += n.y || 0;
-              sumZ += n.z || 0;
-            });
-            const avgX = sumX / newlyAddedNodes.length;
-            const avgY = sumY / newlyAddedNodes.length;
-            const avgZ = sumZ / newlyAddedNodes.length;
-
-            if (addedNodeIds.length <= 12) {
-              fgRef.current.cameraPosition(
-                { x: avgX, y: avgY, z: avgZ + 120 },
-                { x: avgX, y: avgY, z: avgZ },
-                1400,
-              );
-            }
-          }
-        }, 800);
-
-        // Fades out glowing aura after 8 seconds
-        const timeoutId = setTimeout(() => {
-          setNewlyIngestedNodeIds([]);
-        }, 8000);
-
-        return () => clearTimeout(timeoutId);
-      }
-    }
-
-    prevNodeIdsRef.current = currentNodeIds;
-  }, [graphData.nodes, processedData.nodes]);
 
   // Handle Search submit
   const handleSearchSubmit = (e: React.FormEvent) => {
@@ -425,16 +367,18 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
 
   const resetCamera = () => {
     if (!fgRef.current) return;
-    fgRef.current.cameraPosition(
-      { x: 0, y: 0, z: 250 },
-      { x: 0, y: 0, z: 0 },
-      1000,
-    );
     setSelectedNode(null);
     setSearchQuery(""); // Clear search bar
     if (onClearHighlight) {
       onClearHighlight(); // Notify parent to reset highlightPath state!
     }
+    lastHighlightSignatureRef.current = "";
+    window.setTimeout(() => {
+      if (fgRef.current) {
+        fgRef.current.zoomToFit(900, 80);
+        fgRef.current.refresh();
+      }
+    }, 80);
   };
 
   // Explicitly force react-force-graph to re-render lines and particles when highlights change
@@ -442,20 +386,32 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
     if (fgRef.current) {
       fgRef.current.refresh();
     }
-  }, [highlightPath, newlyIngestedNodeIds]);
+  }, [highlightPath]);
 
-  // Auto zoom-to-fit on reasoning path changes
+  // One-shot camera focus for explicit parent highlight events only.
   useEffect(() => {
-    if (highlightPath.node_ids.length > 0 && fgRef.current) {
-      // Find coordinates of nodes in path
-      setTimeout(() => {
+    if (!fgRef.current) return;
+    const signature = `${highlightPath.mode || "query"}:${highlightPath.node_ids.join("|")}:${highlightPath.link_ids.join("|")}`;
+    if (!highlightPath.node_ids.length) {
+      lastHighlightSignatureRef.current = "";
+      return;
+    }
+    if (lastHighlightSignatureRef.current === signature) return;
+    lastHighlightSignatureRef.current = signature;
+
+    if (highlightTimerRef.current) {
+      window.clearTimeout(highlightTimerRef.current);
+    }
+    highlightTimerRef.current = window.setTimeout(() => {
+      if (fgRef.current) {
         const renderedNodes = processedData.nodes.filter((n: any) =>
           highlightPath.node_ids.includes(n.id),
         );
 
         if (renderedNodes.length > 0) {
-          // Sync search box to first node in highlighted path
-          setSearchQuery(renderedNodes[0].label || renderedNodes[0].id);
+          if ((highlightPath.mode || "query") !== "ingest") {
+            setSearchQuery(renderedNodes[0].label || renderedNodes[0].id);
+          }
 
           // Compute bounding box or average center
           let sumX = 0,
@@ -476,9 +432,14 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
             1800,
           );
         }
-      }, 400);
-    }
-  }, [highlightPath]);
+      }
+    }, 400);
+    return () => {
+      if (highlightTimerRef.current) {
+        window.clearTimeout(highlightTimerRef.current);
+      }
+    };
+  }, [highlightPath, processedData.nodes]);
 
   return (
     <div className="flex flex-col h-full bg-slate-950 border-l border-slate-900 text-slate-100 select-none relative overflow-hidden">
@@ -530,10 +491,11 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
           nodeThreeObject={(node: any) => {
             const isReasoningHighlight = highlightPath.node_ids.includes(
               node.id,
-            );
+            ) && highlightMode !== "ingest";
             const isSelectedHighlight =
               selectedNode && selectedNode.id === node.id;
-            const isIngestedHighlight = newlyIngestedNodeIds.includes(node.id);
+            const isIngestedHighlight =
+              highlightMode === "ingest" && highlightPath.node_ids.includes(node.id);
             const isSearchHighlight =
               !!searchQuery.trim() &&
               ((node.label || "")
