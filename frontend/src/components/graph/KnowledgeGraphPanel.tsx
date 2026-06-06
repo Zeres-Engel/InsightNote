@@ -24,12 +24,14 @@ interface KnowledgeGraphPanelProps {
   graphData: { nodes: GraphNode[]; links: GraphLink[] };
   highlightPath: GraphPath;
   onNodeClick: (nodeId: string) => Promise<NodeDetailsResponse>;
+  onClearHighlight?: () => void;
 }
 
 export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
   graphData,
   highlightPath,
   onNodeClick,
+  onClearHighlight,
 }) => {
   const fgRef = useRef<any>();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -183,12 +185,12 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
 
       if (hasActiveHighlight) {
         if (isHighlighted) {
-          color = "#fbbf24"; // Gold / Orange highlight color
-          val = 3.5; // Grow node
+          color = colorForGroup(group); // Keep its beautiful original category color
+          val = 2.5; // Elegant size growth instead of giant balloons
         } else {
-          // Dim non-highlighted nodes
-          color = "rgba(51, 65, 85, 0.25)";
-          val = 1.0;
+          // Dim non-highlighted nodes softly
+          color = "rgba(71, 85, 105, 0.15)";
+          val = 0.9;
         }
       }
 
@@ -207,15 +209,16 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
         typeof link.target === "object" ? (link.target as any).id : link.target;
       const isHighlighted =
         activeLinkIds.has(link.id) ||
-        (activeNodeIds.has(String(sourceId)) && activeNodeIds.has(String(targetId)));
+        (activeNodeIds.has(String(sourceId)) &&
+          activeNodeIds.has(String(targetId)));
 
       let color = "#475569"; // default slate-600
       let width = 1.0;
 
       if (hasActiveHighlight) {
         if (isHighlighted) {
-          color = "#f59e0b"; // amber
-          width = 3.5;
+          color = "#38bdf8"; // Premium high-tech glowing sky-blue / neon-blue
+          width = 2.2; // Elegant width instead of 3.5
         } else {
           color = "rgba(30, 41, 59, 0.1)";
           width = 0.5;
@@ -339,6 +342,10 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
       1000,
     );
     setSelectedNode(null);
+    setSearchQuery(""); // Clear search bar
+    if (onClearHighlight) {
+      onClearHighlight(); // Notify parent to reset highlightPath state!
+    }
   };
 
   // Auto zoom-to-fit on reasoning path changes
@@ -449,10 +456,12 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
               // Choose color and sizing based on highlight type
               let glowColor = "#a855f7"; // purple for manual selection
               let scaleSize = 2.0;
+              let opacity = 0.25;
 
               if (isReasoningHighlight) {
-                glowColor = "#fbbf24"; // vibrant gold/amber for reasoning paths
-                scaleSize = 2.2;
+                glowColor = "#38bdf8"; // stunning neon sky-blue / cyan
+                scaleSize = 1.6;
+                opacity = 0.18;
               } else if (isIngestedHighlight) {
                 glowColor = "#10b981"; // emerald green for newly ingested nodes
                 scaleSize = 2.1;
@@ -467,7 +476,7 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
               const material = new THREE.MeshBasicMaterial({
                 color: new THREE.Color(glowColor),
                 transparent: true,
-                opacity: 0.25,
+                opacity,
                 blending: THREE.AdditiveBlending,
                 side: THREE.DoubleSide,
               });
@@ -501,7 +510,7 @@ export const KnowledgeGraphPanel: React.FC<KnowledgeGraphPanelProps> = ({
             link.width > 1.5 ? 3.0 : 0
           }
           linkDirectionalParticleSpeed={(link: any) => 0.015}
-          linkDirectionalParticleColor={() => "#fbbf24"} // Gold light pulses
+          linkDirectionalParticleColor={() => "#38bdf8"} // Neon sky-blue light pulses
         />
 
         {/* Reset / Camera Controls Overlay Toolbar */}

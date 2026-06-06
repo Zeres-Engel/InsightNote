@@ -2626,14 +2626,14 @@ def create_document_routes(
             step_definitions = [
                 ("load_file", 0.0),
                 ("document_understanding", 2.0),
-                ("workspace_save", 8.0),
+                ("vector_graph_sync", 8.0),
             ]
 
             # 1. Start upload state: load_file processing
             init_steps = [
                 {"name": "load_file", "status": "processing"},
                 {"name": "document_understanding", "status": "pending"},
-                {"name": "workspace_save", "status": "pending"},
+                {"name": "vector_graph_sync", "status": "pending"},
             ]
             # Generate temporary job id
             job_id = f"job_upload_{generate_track_id('job')[:6]}"
@@ -2824,6 +2824,86 @@ def create_document_routes(
                 import re
                 from pathlib import Path
 
+                def parse_indexing_progress(line: str):
+                    if (
+                        "Completed merging" in line
+                        or "Completed processing file" in line
+                    ):
+                        return "Indexing completed successfully.", 100
+                    if "Phase 3:" in line:
+                        return "Finalizing indexed knowledge...", 95
+                    if "Phase 2: Processing" in line:
+                        match = re.search(
+                            r"Phase 2:\s*Processing\s*(\d+)\s*relations", line
+                        )
+                        n = match.group(1) if match else ""
+                        return (
+                            f"Vector & Graph Sync Orchestration: {n} relationship links..."
+                            if n
+                            else "Vector & Graph Sync Orchestration: relationships...",
+                            90,
+                        )
+                    if "Phase 1: Processing" in line:
+                        match = re.search(
+                            r"Phase 1:\s*Processing\s*(\d+)\s*entities", line
+                        )
+                        n = match.group(1) if match else ""
+                        return (
+                            f"Vector & Graph Sync Orchestration: {n} discovered entities..."
+                            if n
+                            else "Vector & Graph Sync Orchestration: entities...",
+                            85,
+                        )
+                    if "Enriched" in line or "returned enriched content" in line:
+                        return "Vector & Graph Sync Orchestration started...", 80
+                    if "Chunk " in line and " extracted " in line:
+                        match = re.search(
+                            r"Chunk\s+(\d+)\s+of\s+(\d+)\s+extracted\s+(\d+)\s+Ent\s+\+\s+(\d+)\s+Rel",
+                            line,
+                        )
+                        if match:
+                            cur, total, ent, rel = match.groups()
+                            chunk_percent = int(
+                                (int(cur) / max(int(total), 1)) * 10
+                            )
+                            return (
+                                f"Vector & Graph Sync Orchestration: chunk {cur}/{total}, {ent} entities + {rel} relations",
+                                82 + chunk_percent,
+                            )
+                        return "Vector & Graph Sync Orchestration running...", 84
+                    return None
+
+                try:
+                    from app.core.kg.shared_storage import (
+                        get_namespace_data,
+                        get_namespace_lock,
+                    )
+
+                    pipeline_status = await get_namespace_data(
+                        "pipeline_status", workspace=target_rag.workspace
+                    )
+                    pipeline_status_lock = get_namespace_lock(
+                        "pipeline_status", workspace=target_rag.workspace
+                    )
+                    async with pipeline_status_lock:
+                        pipeline_messages = list(
+                            pipeline_status.get("history_messages", [])
+                        )
+                        latest_pipeline_message = pipeline_status.get(
+                            "latest_message", ""
+                        )
+                    if latest_pipeline_message:
+                        pipeline_messages.append(latest_pipeline_message)
+                    for line in reversed(pipeline_messages[-80:]):
+                        parsed = parse_indexing_progress(str(line))
+                        if parsed is not None:
+                            progress_msg, percent = parsed
+                            break
+                except Exception as status_err:
+                    logger.debug(
+                        f"Unable to read pipeline progress status: {status_err}"
+                    )
+
                 log_path = (
                     Path(__file__).resolve().parent.parent.parent
                     / "logs"
@@ -2832,7 +2912,7 @@ def create_document_routes(
                 if not log_path.exists():
                     log_path = Path("logs/server.log")
 
-                if log_path.exists():
+                if percent < 80 and log_path.exists():
                     try:
                         with open(log_path, "r", encoding="utf-8") as lf:
                             # Read the last 150 lines
@@ -2884,8 +2964,14 @@ def create_document_routes(
                                         r"Processing pages:\s*(\d+)%", line
                                     )
                                     p = int(match.group(1)) if match else 100
-                                    progress_msg = f"Assembling structured pages: {p}%"
-                                    percent = 65 + int(p * 0.1)
+                                    if p >= 100:
+                                        progress_msg = (
+                                            "Document understanding complete. Starting vector and graph sync..."
+                                        )
+                                        percent = 80
+                                    else:
+                                        progress_msg = f"Assembling structured pages: {p}%"
+                                        percent = 65 + int(p * 0.1)
                                     break
                                 elif "Successfully processed" in line:
                                     progress_msg = (
@@ -2894,65 +2980,9 @@ def create_document_routes(
                                     percent = 75
                                     break
 
-                            if (
-                                "Completed merging" in line
-                                or "Completed processing file" in line
-                            ):
-                                progress_msg = "Workspace saved successfully."
-                                percent = 100
-                                break
-                            elif "Phase 3:" in line:
-                                progress_msg = "Saving final knowledge structure..."
-                                percent = 95
-                                break
-                            elif "Phase 2: Processing" in line:
-                                match = re.search(
-                                    r"Phase 2:\s*Processing\s*(\d+)\s*relations", line
-                                )
-                                n = match.group(1) if match else ""
-                                progress_msg = (
-                                    f"Saving {n} relationship links..."
-                                    if n
-                                    else "Merging relationships..."
-                                )
-                                percent = 90
-                                break
-                            elif "Phase 1: Processing" in line:
-                                match = re.search(
-                                    r"Phase 1:\s*Processing\s*(\d+)\s*entities", line
-                                )
-                                n = match.group(1) if match else ""
-                                progress_msg = (
-                                    f"Saving {n} discovered entities..."
-                                    if n
-                                    else "Cleaning graph entities..."
-                                )
-                                percent = 85
-                                break
-                            elif (
-                                "Enriched" in line
-                                or "returned enriched content" in line
-                            ):
-                                progress_msg = "Document processing complete. Saving workspace..."
-                                percent = 80
-                                break
-                            elif "Chunk " in line and " extracted " in line:
-                                match = re.search(
-                                    r"Chunk\s+(\d+)\s+of\s+(\d+)\s+extracted\s+(\d+)\s+Ent\s+\+\s+(\d+)\s+Rel",
-                                    line,
-                                )
-                                if match:
-                                    cur, total, ent, rel = match.groups()
-                                    chunk_percent = int(
-                                        (int(cur) / max(int(total), 1)) * 10
-                                    )
-                                    progress_msg = (
-                                        f"Extracted knowledge chunk {cur}/{total}: {ent} entities + {rel} relations"
-                                    )
-                                    percent = 82 + chunk_percent
-                                else:
-                                    progress_msg = "Extracting document knowledge..."
-                                    percent = 84
+                            parsed = parse_indexing_progress(line)
+                            if parsed is not None:
+                                progress_msg, percent = parsed
                                 break
                     except Exception as log_err:
                         logger.warning(
@@ -2966,7 +2996,7 @@ def create_document_routes(
                 phase_thresholds = {
                     "load_file": 15,
                     "document_understanding": 80,
-                    "workspace_save": 100,
+                    "vector_graph_sync": 100,
                 }
                 previous_threshold = 0
                 for step_name, done_threshold in phase_thresholds.items():
@@ -2986,7 +3016,7 @@ def create_document_routes(
                         steps = [
                             {"name": s[0], "status": "done"} for s in step_definitions
                         ]
-                        progress_msg = "Workspace saved successfully."
+                        progress_msg = "Indexing completed successfully."
                         if workspace and workspace in notebooks_db:
                             notebooks_db[workspace]["status"] = "ready"
                             notebooks_db[workspace]["source_count"] = len(docs_by_track)
@@ -3054,13 +3084,8 @@ def create_document_routes(
                     else:
                         new_node_ids = sorted(graph_node_ids - last_graph_node_ids)
                         new_link_ids = sorted(graph_link_ids - last_graph_link_ids)
-                        graph_changed = (
-                            len(new_node_ids) >= 5
-                            or len(new_link_ids) >= 10
-                            or (
-                                status == "ready"
-                                and bool(new_node_ids or new_link_ids)
-                            )
+                        graph_changed = status == "ready" and bool(
+                            new_node_ids or new_link_ids
                         )
                     if graph_changed:
                         last_graph_node_ids = graph_node_ids

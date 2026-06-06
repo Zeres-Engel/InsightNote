@@ -25,11 +25,11 @@ interface ChatPanelProps {
   onToggleSources?: () => void;
 }
 
-const PRESET_BADGES_INSURANCE = [
-  "What is the main coverage of this policy?",
-  "Does this policy cover motorcycle accidents?",
-  "What exclusions apply to vehicle accidents?",
-  "Which clauses support your answer?",
+const PRESET_BADGES_DOCUMENT = [
+  "Summarize the key facts in these documents.",
+  "What entities are most important in this workspace?",
+  "Which documents support your answer?",
+  "What are the strongest relationships in the graph?",
   "Show me the reasoning path in the graph.",
 ];
 
@@ -65,7 +65,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       ? latestAssistantSuggestions
       : isResume
         ? PRESET_BADGES_RESUME
-        : PRESET_BADGES_INSURANCE;
+        : PRESET_BADGES_DOCUMENT;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -444,7 +444,9 @@ const MessageBubble: React.FC<{ message: ChatMessage }> = ({ message }) => {
                       {cite.title}
                     </span>
                     <span className="text-[9px] bg-emerald-950/60 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-900/40 font-bold flex-shrink-0">
-                      Match: {Math.round(cite.score * 100)}%
+                      {cite.score > 0
+                        ? `Match: ${Math.round(cite.score * 100)}%`
+                        : "Retrieved"}
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-400 leading-relaxed italic border-l border-slate-800 pl-2">

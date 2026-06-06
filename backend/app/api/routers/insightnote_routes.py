@@ -62,6 +62,15 @@ class SourceAddRequest(BaseModel):
     value: str
 
 
+class URLAddRequest(BaseModel):
+    url: str
+
+
+class NoteAddRequest(BaseModel):
+    title: str
+    content: str
+
+
 class SourceAddResponse(BaseModel):
     source_id: str
     name: str
@@ -816,6 +825,7 @@ def build_suggested_questions(
     node_ids: Optional[List[str]] = None,
     citations: Optional[List[Any]] = None,
     is_resume: bool = False,
+    is_insurance: bool = False,
 ) -> List[str]:
     node_ids = [str(n).replace("_", " ") for n in (node_ids or []) if n][:4]
     citation_titles = []
@@ -842,11 +852,18 @@ def build_suggested_questions(
                 "What projects best prove this candidate's experience?",
             ]
         )
-    else:
+    elif is_insurance:
         suggestions.extend(
             [
                 "Which exclusions or limitations should I verify next?",
                 "What supporting clauses back this answer?",
+            ]
+        )
+    else:
+        suggestions.extend(
+            [
+                "Which document provides the strongest evidence?",
+                "What graph relationships should I inspect next?",
             ]
         )
 
@@ -1298,7 +1315,7 @@ def create_insightnote_routes(
                     for s in [
                         "load_file",
                         "document_understanding",
-                        "workspace_save",
+                        "vector_graph_sync",
                     ]
                 ],
             )
@@ -1354,18 +1371,20 @@ def create_insightnote_routes(
         step_definitions = [
             ("load_file", 0.0),
             ("document_understanding", 1.5),
-            ("workspace_save", 7.5),
+            ("vector_graph_sync", 6.0),
         ]
 
         all_done = True
         for name, req_time in step_definitions:
             if elapsed >= req_time + 1.5:
                 # Hold the last step (or subsequent steps) as "processing" if real DB says we aren't done yet
-                if name == "workspace_save" and docs_by_track and not all_done_real:
+                if name == "vector_graph_sync" and docs_by_track and not all_done_real:
                     steps.append(PipelineStep(name=name, status="processing"))
                     all_done = False
                 else:
-                    if name == "document_understanding" and job.get("force_mineru_fallback"):
+                    if name == "document_understanding" and job.get(
+                        "force_mineru_fallback"
+                    ):
                         steps.append(
                             PipelineStep(name=name, status="failed_fallback_used")
                         )
@@ -1390,7 +1409,7 @@ def create_insightnote_routes(
                     for s in [
                         "load_file",
                         "document_understanding",
-                        "workspace_save",
+                        "vector_graph_sync",
                     ]
                 ]
                 if notebook_id in notebooks_db:
@@ -1657,6 +1676,178 @@ def create_insightnote_routes(
             pipeline_job_id=job_id,
         )
 
+    @router.post(
+        "/notebooks/{notebook_id}/sources/url", response_model=SourceAddResponse
+    )
+    async def add_notebook_url(
+        notebook_id: str,
+        request: URLAddRequest,
+        background_tasks: BackgroundTasks,
+    ):
+        """Add a URL source to a specific notebook. Crawls content and enqueues to real RAG."""
+        ensure_notebook_exists(notebook_id)
+
+        job_id = f"job_url_{generate_track_id('job')[:6]}"
+        source_id = f"src_{generate_track_id('src')[:6]}"
+
+        url = request.url.strip()
+        if not url.startswith("http://") and not url.startswith("https://"):
+            url = "https://" + url
+
+        # Clean url name for filename
+        from urllib.parse import urlparse
+
+        parsed_url = urlparse(url)
+        clean_name = parsed_url.netloc + parsed_url.path
+        clean_name = re.sub(r"[^A-Za-z0-9_.-]", "_", clean_name).strip("_")
+        if not clean_name:
+            clean_name = "scraped_webpage"
+        filename = f"{clean_name}.md"
+
+        notebook_input_dir = get_notebook_input_dir(notebook_id)
+        file_path = notebook_input_dir / filename
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            logger.info(f"[SCRAPE] Starting crawl for: {url}")
+            # Try Crawl4AI first
+            scraped_content = ""
+            try:
+                from crawl4ai import AsyncWebCrawler
+
+                async with AsyncWebCrawler() as crawler:
+                    crawl_res = await crawler.arun(url=url)
+                    if crawl_res and crawl_res.markdown:
+                        scraped_content = crawl_res.markdown
+            except Exception as crawl_err:
+                logger.warning(
+                    f"Crawl4AI not available or failed: {crawl_err}. Falling back to standard scraper."
+                )
+
+            if not scraped_content:
+                # Regular bs4 scraping fallback
+                import httpx
+                from bs4 import BeautifulSoup
+
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                }
+                async with httpx.AsyncClient(
+                    follow_redirects=True, headers=headers, timeout=15.0
+                ) as client:
+                    resp = await client.get(url)
+                    resp.raise_for_status()
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    for s in soup(["script", "style", "nav", "header", "footer"]):
+                        s.decompose()
+                    scraped_content = (
+                        f"# {soup.title.string if soup.title else clean_name}\n\nURL: {url}\n\n"
+                        + soup.get_text(separator="\n")
+                    )
+
+            # Clean up content
+            lines = [l.strip() for l in scraped_content.splitlines() if l.strip()]
+            final_text = "\n\n".join(lines)
+
+            # Write to disk
+            import aiofiles
+
+            async with aiofiles.open(file_path, "w", encoding="utf-8") as out:
+                await out.write(final_text)
+
+        except Exception as e:
+            logger.error(f"[SCRAPE] Failed scraping url {url}: {e}")
+            raise HTTPException(
+                status_code=400, detail=f"Failed to scrape webpage: {str(e)}"
+            )
+
+        # Register progressive job
+        active_jobs_db[job_id] = {
+            "job_id": job_id,
+            "notebook_id": notebook_id,
+            "filename": filename,
+            "created_at": time.time(),
+            "force_mineru_fallback": True,  # Standard text/md fallback (extremely fast!)
+        }
+        save_active_jobs()
+
+        notebooks_db[notebook_id]["status"] = "processing"
+        await chat_history_db.update_notebook_status(notebook_id, status="processing")
+
+        notebook_rag = await get_rag_instance(notebook_id, rag)
+        success, final_track_id = await notebook_rag.apipeline_enqueue_file_reference(
+            str(file_path.absolute()),
+            track_id=job_id,
+            metadata={"graph_mode": True, "multi_modal": False, "url": url},
+        )
+        background_tasks.add_task(notebook_rag.apipeline_process_enqueue_documents)
+
+        return SourceAddResponse(
+            source_id=source_id,
+            name=url,
+            type="url",
+            status="processing",
+            pipeline_job_id=job_id,
+        )
+
+    @router.post(
+        "/notebooks/{notebook_id}/sources/note", response_model=SourceAddResponse
+    )
+    async def add_notebook_note(
+        notebook_id: str,
+        request: NoteAddRequest,
+        background_tasks: BackgroundTasks,
+    ):
+        """Add a rich text note source to a specific notebook. Enqueues to real RAG."""
+        ensure_notebook_exists(notebook_id)
+
+        job_id = f"job_note_{generate_track_id('job')[:6]}"
+        source_id = f"src_{generate_track_id('src')[:6]}"
+
+        clean_title = re.sub(r"[^A-Za-z0-9_.-]", "_", request.title.strip()).strip("_")
+        if not clean_title:
+            clean_title = f"note_{generate_track_id('note')[:4]}"
+        filename = f"{clean_title}.txt"
+
+        notebook_input_dir = get_notebook_input_dir(notebook_id)
+        file_path = notebook_input_dir / filename
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write content to disk
+        import aiofiles
+
+        async with aiofiles.open(file_path, "w", encoding="utf-8") as out:
+            await out.write(f"# {request.title}\n\n{request.content}")
+
+        # Register progressive job
+        active_jobs_db[job_id] = {
+            "job_id": job_id,
+            "notebook_id": notebook_id,
+            "filename": filename,
+            "created_at": time.time(),
+            "force_mineru_fallback": True,  # Simple text files parse instantly!
+        }
+        save_active_jobs()
+
+        notebooks_db[notebook_id]["status"] = "processing"
+        await chat_history_db.update_notebook_status(notebook_id, status="processing")
+
+        notebook_rag = await get_rag_instance(notebook_id, rag)
+        success, final_track_id = await notebook_rag.apipeline_enqueue_file_reference(
+            str(file_path.absolute()),
+            track_id=job_id,
+            metadata={"graph_mode": True, "multi_modal": False},
+        )
+        background_tasks.add_task(notebook_rag.apipeline_process_enqueue_documents)
+
+        return SourceAddResponse(
+            source_id=source_id,
+            name=request.title,
+            type="text",
+            status="processing",
+            pipeline_job_id=job_id,
+        )
+
     @router.get("/notebooks/{notebook_id}/sources", response_model=List[SourceListItem])
     async def list_notebook_sources(notebook_id: str):
         """List ingested sources under a notebook."""
@@ -1672,6 +1863,15 @@ def create_insightnote_routes(
         # Fetch real document statuses from MongoDB status storage
         try:
             notebook_rag = await get_rag_instance(notebook_id, rag)
+            graph_nodes = []
+            try:
+                graph = getattr(notebook_rag, "chunk_entity_relation_graph", None)
+                if graph is not None:
+                    graph_nodes = await graph.get_all_nodes()
+            except Exception as graph_count_err:
+                logger.debug(
+                    f"Unable to derive source entity count from graph: {graph_count_err}"
+                )
             docs_tuples, total_count = await notebook_rag.doc_status.get_docs_paginated(
                 status_filter=None, page=1, page_size=100
             )
@@ -1687,13 +1887,30 @@ def create_insightnote_routes(
                 if status_str == "processed":
                     status_str = "ready"
 
-                entity_count = 15
-                if hasattr(doc, "metadata") and isinstance(doc.metadata, dict):
+                file_path = getattr(doc, "file_path", None) or ""
+                file_basename = os.path.basename(file_path)
+                entity_count = 0
+                if graph_nodes and file_path:
+                    for node in graph_nodes or []:
+                        node_file_path = str(node.get("file_path") or "")
+                        node_source_id = str(node.get("source_id") or "")
+                        if (
+                            file_path in node_file_path
+                            or file_basename
+                            and file_basename in node_file_path
+                            or doc_id in node_source_id
+                        ):
+                            entity_count += 1
+                if (
+                    entity_count == 0
+                    and hasattr(doc, "metadata")
+                    and isinstance(doc.metadata, dict)
+                ):
                     val = doc.metadata.get("entity_count")
                     if val is not None:
                         entity_count = val
 
-                chunk_count = 5
+                chunk_count = 0
                 if hasattr(doc, "chunks_count") and doc.chunks_count is not None:
                     chunk_count = doc.chunks_count
 
@@ -1939,6 +2156,11 @@ def create_insightnote_routes(
 
         # Fallback to mock details if not found or if Neo4j is offline
         is_resume = "resume" in notebook_id or "resume" in nb["name"].lower()
+        is_insurance = (
+            "insurance" in notebook_id
+            or "insurance" in nb["name"].lower()
+            or notebook_id == "notebook_insurance_demo"
+        )
         node_universe = MOCK_NODES_RESUME if is_resume else MOCK_NODES_INSURANCE
 
         for n in node_universe:
@@ -2051,6 +2273,11 @@ def create_insightnote_routes(
             )
         msg_lower = prompt_message.strip().lower()
         is_resume = "resume" in notebook_id or "resume" in nb["name"].lower()
+        is_insurance = (
+            "insurance" in notebook_id
+            or "insurance" in nb["name"].lower()
+            or notebook_id == "notebook_insurance_demo"
+        )
 
         # Support both 'chat_history' and 'conversation_history' parameters for maximum frontend compatibility
         input_history = request.conversation_history or request.chat_history or []
@@ -2134,7 +2361,13 @@ def create_insightnote_routes(
 
             yield 'data: {"type": "done"}\n\n'
 
-        target_qa_set = PRESET_QA_RESUME if is_resume else PRESET_QA_INSURANCE
+        target_qa_set = (
+            PRESET_QA_RESUME
+            if is_resume
+            else PRESET_QA_INSURANCE
+            if is_insurance
+            else {}
+        )
 
         # Fuzzy match over questions
         matched_preset = None
@@ -2175,6 +2408,7 @@ def create_insightnote_routes(
                 preset_node_ids,
                 matched_preset.get("citations", []),
                 is_resume,
+                is_insurance,
             )
             # Save user message to PostgreSQL if active_conversation_id is resolved
             if active_conversation_id:
@@ -2294,8 +2528,14 @@ def create_insightnote_routes(
                 citations = []
                 for ref in references:
                     fpath = ref.get("file_path") or ""
-                    # Use the calculated maximum score, falling back to ref's score or a sensible 0.85
-                    real_score = file_scores.get(fpath, ref.get("score") or 0.85)
+                    # Use real retrieval score only. Do not fabricate static 85/90% matches.
+                    real_score = file_scores.get(
+                        fpath,
+                        ref.get("score")
+                        or ref.get("similarity")
+                        or ref.get("vector_score")
+                        or 0.0,
+                    )
                     if real_score > 1.0:
                         real_score = 1.0
                     citations.append(
@@ -2381,7 +2621,7 @@ def create_insightnote_routes(
                         )
 
                 suggested_questions = build_suggested_questions(
-                    prompt_message, node_ids, citations, is_resume
+                    prompt_message, node_ids, citations, is_resume, is_insurance
                 )
 
                 # Logger check for rerank
@@ -2525,7 +2765,7 @@ def create_insightnote_routes(
                 link_ids=["edge_r01", "edge_r04"],
             )
             suggested_questions = build_suggested_questions(
-                prompt_message, graph_path.node_ids, citations, True
+                prompt_message, graph_path.node_ids, citations, True, False
             )
 
             # Save user prompt
@@ -2576,25 +2816,38 @@ def create_insightnote_routes(
                 suggested_questions=suggested_questions,
             )
         else:
-            answer = f"You asked: '{prompt_message}' inside the insurance analysis workspace. The default policy coverage is $100,000 for liability. Please select a preset insurance badge question to witness 3D graph highlights!"
-            citations = [
-                CitationItem(
-                    source_id="src_001",
-                    title="Insurance Policy Demo",
-                    chunk_id="chunk_ins_fallback",
-                    text="Core Liability Coverage. Standard auto policy contract benefits.",
-                    score=0.9,
+            if is_insurance:
+                answer = f"You asked: '{prompt_message}' inside the insurance analysis workspace. The default policy coverage is $100,000 for liability. Please select a preset insurance badge question to witness 3D graph highlights!"
+                citations = [
+                    CitationItem(
+                        source_id="src_001",
+                        title="Insurance Policy Demo",
+                        chunk_id="chunk_ins_fallback",
+                        text="Core Liability Coverage. Standard auto policy contract benefits.",
+                        score=0.9,
+                    )
+                ]
+                retrieval_steps = [
+                    "No loaded sources detected",
+                    "Loaded fallback insurance instructions",
+                ]
+                graph_path = GraphPath(
+                    node_ids=["policy_001", "coverage_012"], link_ids=["edge_001"]
                 )
-            ]
-            retrieval_steps = [
-                "No loaded sources detected",
-                "Loaded fallback insurance instructions",
-            ]
-            graph_path = GraphPath(
-                node_ids=["policy_001", "coverage_012"], link_ids=["edge_001"]
-            )
+            else:
+                answer = (
+                    "I could not find enough grounded context in this workspace to answer "
+                    f"'{prompt_message}'. Try asking about the uploaded documents, key entities, "
+                    "or graph relationships that appear in this notebook."
+                )
+                citations = []
+                retrieval_steps = [
+                    "Checked notebook document context",
+                    "No sufficiently grounded answer was found",
+                ]
+                graph_path = GraphPath()
             suggested_questions = build_suggested_questions(
-                prompt_message, graph_path.node_ids, citations, False
+                prompt_message, graph_path.node_ids, citations, is_resume, is_insurance
             )
 
             # Save user prompt

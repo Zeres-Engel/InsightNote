@@ -183,7 +183,7 @@ def test_upload_file_stream(client, mock_rag):
     assert [step["name"] for step in first_chunk["steps"]] == [
         "load_file",
         "document_understanding",
-        "workspace_save",
+        "vector_graph_sync",
     ]
 
 

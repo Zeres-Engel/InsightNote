@@ -55,8 +55,8 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
     document_understanding: "Layout-Aware PDF Extraction",
     multi_modal_processing: "Layout-Aware PDF Extraction",
     multi_modal_enrichment: "Deep Layout Analysis & OCR",
+    vector_graph_sync: "Vector & Graph Sync Orchestration",
     graph_rag_indexing: "Vector & Graph Sync Orchestration",
-    workspace_save: "Vector & Graph Sync Orchestration",
     chunking: "Hierarchical Parent-Child Chunking",
     entity_extraction: "Semantic Entity Extraction",
     relationship_extraction: "Meticulous Relation Mapping",
@@ -462,16 +462,15 @@ export const SourcesPanel: React.FC<SourcesPanelProps> = ({
                 )}
 
                 {/* Stats like entity count if active */}
-                {(src.entity_count !== undefined ||
-                  src.chunk_count !== undefined) && (
+                {((src.entity_count || 0) > 0 || (src.chunk_count || 0) > 0) && (
                   <div className="flex gap-3 mt-2.5 pt-2.5 border-t border-slate-900/60 text-[10px] text-slate-400">
-                    {src.entity_count !== undefined && (
+                    {(src.entity_count || 0) > 0 && (
                       <span className="flex items-center gap-1.5 font-bold">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                         {src.entity_count} entities
                       </span>
                     )}
-                    {src.chunk_count !== undefined && (
+                    {(src.chunk_count || 0) > 0 && (
                       <span className="flex items-center gap-1.5 font-bold">
                         <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
                         {src.chunk_count} chunks

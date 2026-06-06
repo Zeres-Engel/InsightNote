@@ -136,36 +136,6 @@ export default function App() {
           [key]: jobStatus,
         }));
 
-        // Real-time graph node sync:
-        // Trigger graph reload if pipeline has reached entity extraction or neo4j writing
-        const neo4jStep = jobStatus.steps.find((s) => s.name === "neo4j_write");
-        const entityStep = jobStatus.steps.find(
-          (s) => s.name === "entity_extraction",
-        );
-        if (
-          (neo4jStep &&
-            (neo4jStep.status === "done" ||
-              neo4jStep.status === "processing")) ||
-          (entityStep && entityStep.status === "done")
-        ) {
-          try {
-            const updatedGraph = await api.getGraph(activeNotebook.id);
-            // Only update graph state if nodes or links count has actually changed!
-            // This prevents unnecessary bounciness/jitter when there are no new nodes yet.
-            setGraphData((current) => {
-              if (
-                updatedGraph.nodes.length !== current.nodes.length ||
-                updatedGraph.links.length !== current.links.length
-              ) {
-                return updatedGraph;
-              }
-              return current;
-            });
-          } catch (ge) {
-            console.warn("Failed to load real-time graph status", ge);
-          }
-        }
-
         if (jobStatus.status === "ready" || jobStatus.status === "failed") {
           setActiveJobId(null);
           // Refresh sources & graph final state
@@ -324,29 +294,70 @@ export default function App() {
   // Handler: Add URL source
   const handleAddUrl = async (url: string) => {
     if (!activeNotebook) return;
-    const newSrc: SourceListItem = {
-      id: `src_url_${Date.now()}`,
-      name: url,
-      type: "url",
-      status: "ready",
-      entity_count: 3,
-      chunk_count: 5,
-    };
-    setSources((prev) => [newSrc, ...prev]);
+    try {
+      const response = await api.addUrl(activeNotebook.id, url);
+      const pendingSource: SourceListItem = {
+        id: response.source_id,
+        name: response.name,
+        type: response.type,
+        status: response.status,
+        entity_count: 0,
+        chunk_count: 0,
+      };
+      setSources((prev) => [pendingSource, ...prev]);
+
+      if (response.pipeline_job_id) {
+        setActiveJobId(response.pipeline_job_id);
+        const initJobStatus = await api.getPipelineStatus(
+          response.pipeline_job_id,
+        );
+        setPipelineJobs((prev) => ({
+          ...prev,
+          [response.source_id]: initJobStatus,
+        }));
+      }
+    } catch (e) {
+      console.error("Failed to add URL source", e);
+    }
   };
 
   // Handler: Add plain-text note source
   const handleAddText = async (text: string) => {
     if (!activeNotebook) return;
-    const newSrc: SourceListItem = {
-      id: `src_text_${Date.now()}`,
-      name: text.split("\n")[0] || "Custom Note",
-      type: "text",
-      status: "ready",
-      entity_count: 2,
-      chunk_count: 3,
-    };
-    setSources((prev) => [newSrc, ...prev]);
+    try {
+      // Parse title and content
+      let title = "Custom Note";
+      let body = text;
+      if (text.startsWith("Title: ")) {
+        const lines = text.split("\n");
+        title = lines[0].replace("Title: ", "").trim();
+        body = lines.slice(1).join("\n").trim();
+      }
+
+      const response = await api.addNote(activeNotebook.id, title, body);
+      const pendingSource: SourceListItem = {
+        id: response.source_id,
+        name: response.name,
+        type: response.type,
+        status: response.status,
+        entity_count: 0,
+        chunk_count: 0,
+      };
+      setSources((prev) => [pendingSource, ...prev]);
+
+      if (response.pipeline_job_id) {
+        setActiveJobId(response.pipeline_job_id);
+        const initJobStatus = await api.getPipelineStatus(
+          response.pipeline_job_id,
+        );
+        setPipelineJobs((prev) => ({
+          ...prev,
+          [response.source_id]: initJobStatus,
+        }));
+      }
+    } catch (e) {
+      console.error("Failed to add custom text note", e);
+    }
   };
 
   // Handler: Load Example Resume file
@@ -406,26 +417,6 @@ export default function App() {
             ...prev,
             [tempSourceId]: progress,
           }));
-
-          if (progress.graph_changed || progress.new_node_ids?.length) {
-            void api.getGraph(activeNotebook.id).then((updatedGraph) => {
-              setGraphData((current) => {
-                if (
-                  updatedGraph.nodes.length !== current.nodes.length ||
-                  updatedGraph.links.length !== current.links.length
-                ) {
-                  return updatedGraph;
-                }
-                return current;
-              });
-              if (progress.new_node_ids?.length) {
-                setHighlightPath({
-                  node_ids: progress.new_node_ids,
-                  link_ids: progress.new_link_ids || [],
-                });
-              }
-            });
-          }
         },
       );
 
@@ -454,9 +445,10 @@ export default function App() {
 
       const updatedGraph = await api.getGraph(activeNotebook.id);
       setGraphData(updatedGraph);
-
-      const updatedNb = await api.getNotebook(activeNotebook.id);
-      setActiveNotebook(updatedNb);
+      setHighlightPath({
+        node_ids: updatedGraph.nodes.slice(0, 25).map((node) => node.id),
+        link_ids: updatedGraph.links.slice(0, 25).map((link) => link.id),
+      });
 
       const list = await api.listNotebooks();
       setNotebooks(list);
@@ -995,6 +987,9 @@ export default function App() {
             graphData={graphData}
             highlightPath={highlightPath}
             onNodeClick={handleNodeClick}
+            onClearHighlight={() =>
+              setHighlightPath({ node_ids: [], link_ids: [] })
+            }
           />
         </div>
       </div>

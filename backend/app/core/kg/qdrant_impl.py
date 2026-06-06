@@ -645,8 +645,9 @@ class QdrantVectorDBStorage(BaseVectorStorage):
             for i in range(0, len(contents), self._max_batch_size)
         ]
 
-        embedding_tasks = [self.embedding_func(batch) for batch in batches]
-        embeddings_list = await asyncio.gather(*embedding_tasks)
+        embeddings_list = []
+        for batch in batches:
+            embeddings_list.append(await self.embedding_func(batch))
 
         embeddings = np.concatenate(embeddings_list)
 

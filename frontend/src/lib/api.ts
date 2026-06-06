@@ -128,7 +128,7 @@ export async function getPipelineStatus(
         steps: [
           { name: "load_file", status: "done" },
           { name: "document_understanding", status: "done" },
-          { name: "workspace_save", status: "done" },
+          { name: "vector_graph_sync", status: "done" },
         ],
       };
     }
@@ -137,7 +137,7 @@ export async function getPipelineStatus(
     const step_definitions = [
       { name: "load_file", t: 0.0 },
       { name: "document_understanding", t: 1.5 },
-      { name: "workspace_save", t: 7.5 },
+      { name: "vector_graph_sync", t: 5.0 },
     ];
 
     const steps = step_definitions.map((step) => {
@@ -207,6 +207,88 @@ export async function listSources(
     throw new Error();
   } catch (e) {
     return localSources[notebookId] || [];
+  }
+}
+
+export async function addUrl(
+  notebookId: string,
+  url: string,
+): Promise<{
+  source_id: string;
+  name: string;
+  type: string;
+  status: string;
+  pipeline_job_id?: string;
+}> {
+  try {
+    const res = await fetch(`${BASE_URL}/notebooks/${notebookId}/sources/url`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        source_id: data.source_id,
+        name: data.name,
+        type: "url",
+        status: data.status,
+        pipeline_job_id: data.pipeline_job_id,
+      };
+    }
+    throw new Error();
+  } catch (e) {
+    console.warn("Backend down. Emulating addUrl in sandbox.");
+    const sourceId = `src_url_${Date.now()}`;
+    return {
+      source_id: sourceId,
+      name: url,
+      type: "url",
+      status: "ready",
+    };
+  }
+}
+
+export async function addNote(
+  notebookId: string,
+  title: string,
+  content: string,
+): Promise<{
+  source_id: string;
+  name: string;
+  type: string;
+  status: string;
+  pipeline_job_id?: string;
+}> {
+  try {
+    const res = await fetch(
+      `${BASE_URL}/notebooks/${notebookId}/sources/note`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, content }),
+      },
+    );
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        source_id: data.source_id,
+        name: data.name,
+        type: "text",
+        status: data.status,
+        pipeline_job_id: data.pipeline_job_id,
+      };
+    }
+    throw new Error();
+  } catch (e) {
+    console.warn("Backend down. Emulating addNote in sandbox.");
+    const sourceId = `src_text_${Date.now()}`;
+    return {
+      source_id: sourceId,
+      name: title,
+      type: "text",
+      status: "ready",
+    };
   }
 }
 
@@ -405,7 +487,7 @@ export async function uploadFileStream(
     const step_definitions = [
       "load_file",
       "document_understanding",
-      "workspace_save",
+      "vector_graph_sync",
     ];
 
     const nb = localNotebooks.find((n) => n.id === notebookId);

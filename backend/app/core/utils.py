@@ -161,6 +161,12 @@ async def safe_vdb_operation_with_exception(
             await operation()
             return  # Success, return immediately
         except Exception as e:
+            error_text = str(e)
+            is_quota_error = (
+                "429" in error_text
+                or "RESOURCE_EXHAUSTED" in error_text
+                or "Resource exhausted" in error_text
+            )
             if attempt >= max_retries - 1:
                 error_msg = f"VDB {operation_name} failed for {entity_name} after {max_retries} attempts: {e}"
                 log_func(error_msg)
@@ -170,7 +176,10 @@ async def safe_vdb_operation_with_exception(
                     f"VDB {operation_name} attempt {attempt + 1} failed for {entity_name}: {e}, retrying..."
                 )
                 if retry_delay > 0:
-                    await asyncio.sleep(retry_delay)
+                    delay = retry_delay * (2**attempt)
+                    if is_quota_error:
+                        delay = max(delay, 8.0 * (attempt + 1))
+                    await asyncio.sleep(delay)
 
 
 def get_env_value(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from collections import Counter, defaultdict
 from functools import partial
@@ -69,6 +70,15 @@ from app.core.utils import (
     update_chunk_cache_list,
     use_llm_func_with_cache,
 )
+
+
+def _is_quota_exhausted_error(error: BaseException) -> bool:
+    error_text = str(error)
+    return (
+        "429" in error_text
+        or "RESOURCE_EXHAUSTED" in error_text
+        or "Resource exhausted" in error_text
+    )
 
 # use the .env that is inside the current folder
 # allows to use different .env file for each zerag instance
@@ -697,7 +707,11 @@ async def rebuild_knowledge_from_chunks(
             continue
 
     # Get max async tasks limit from global_config for semaphore control
-    graph_max_async = global_config.get("llm_model_max_async", 4) * 2
+    configured_graph_max_async = global_config.get("graph_merge_max_async")
+    if configured_graph_max_async is None:
+        configured_graph_max_async = os.getenv("ZERAG_GRAPH_MERGE_MAX_ASYNC")
+    graph_max_async = int(configured_graph_max_async or 2)
+    graph_max_async = max(1, min(graph_max_async, global_config.get("llm_model_max_async", 4) * 2))
     semaphore = asyncio.Semaphore(graph_max_async)
 
     # Counters for tracking progress
@@ -2524,7 +2538,11 @@ async def merge_nodes_and_edges(
         pipeline_status["history_messages"].append(log_message)
 
     # Get max async tasks limit from global_config for semaphore control
-    graph_max_async = global_config.get("llm_model_max_async", 4) * 2
+    configured_graph_max_async = global_config.get("graph_merge_max_async")
+    if configured_graph_max_async is None:
+        configured_graph_max_async = os.getenv("ZERAG_GRAPH_MERGE_MAX_ASYNC")
+    graph_max_async = int(configured_graph_max_async or 2)
+    graph_max_async = max(1, min(graph_max_async, global_config.get("llm_model_max_async", 4) * 2))
     semaphore = asyncio.Semaphore(graph_max_async)
 
     # ===== Phase 1: Process all entities concurrently =====
@@ -2681,6 +2699,28 @@ async def merge_nodes_and_edges(
 
                 except Exception as e:
                     error_msg = f"Error processing relation `{sorted_edge_key}`: {e}"
+                    if _is_quota_exhausted_error(e):
+                        logger.warning(
+                            f"{error_msg}. Skipping relationship vector write due to provider quota; graph merge will continue."
+                        )
+                        try:
+                            if (
+                                pipeline_status is not None
+                                and pipeline_status_lock is not None
+                            ):
+                                async with pipeline_status_lock:
+                                    pipeline_status["latest_message"] = (
+                                        "Vector service is rate-limited; continuing graph sync..."
+                                    )
+                                    pipeline_status["history_messages"].append(
+                                        pipeline_status["latest_message"]
+                                    )
+                        except Exception as status_error:
+                            logger.debug(
+                                f"Failed to update quota warning status: {status_error}"
+                            )
+                        return None, []
+
                     logger.error(error_msg)
 
                     # Try to update pipeline status, but don't let status update failure affect main exception
