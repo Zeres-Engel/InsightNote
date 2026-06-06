@@ -252,11 +252,13 @@ export async function addUrl(
 async function readSourceIngestStream(
   endpoint: string,
   body: unknown,
-  onProgress: (progress: PipelineJobResponse & {
-    source_id?: string;
-    name?: string;
-    type?: string;
-  }) => void,
+  onProgress: (
+    progress: PipelineJobResponse & {
+      source_id?: string;
+      name?: string;
+      type?: string;
+    },
+  ) => void,
 ): Promise<{
   source_id: string;
   name: string;
@@ -766,9 +768,15 @@ export async function getGraph(notebookId: string): Promise<GraphResponse> {
       ];
       return { nodes: resumeNodes, links: resumeLinks };
     }
+    if (notebookId === "notebook_insurance_demo" || notebookId === "default") {
+      return {
+        nodes: [...MOCK_NODES],
+        links: [...MOCK_LINKS],
+      };
+    }
     return {
-      nodes: [...MOCK_NODES],
-      links: [...MOCK_LINKS],
+      nodes: [],
+      links: [],
     };
   }
 }
