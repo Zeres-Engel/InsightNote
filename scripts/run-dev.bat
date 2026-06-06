@@ -4,7 +4,7 @@ echo ==============================================================
 echo InsightNote Development Environment - Cleaning ^& Initializing...
 echo ==============================================================
 
-# Get current script path and set roots
+:: Get current script path and set roots
 set SCRIPT_DIR=%~dp0
 set PROJECT_ROOT=%SCRIPT_DIR%..
 
@@ -22,7 +22,7 @@ mkdir "rag_storage"
 mkdir "backend\logs"
 
 echo [3/4] Starting fresh PostgreSQL, MongoDB, Neo4j, and Qdrant containers...
-docker compose up -d --build
+docker compose up -d postgres mongodb neo4j qdrant mongo-express adminer
 
 echo [4/4] Starting development servers...
 echo Starting Backend server in a new window...

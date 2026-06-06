@@ -26,7 +26,7 @@ mkdir -p "$PROJECT_ROOT/backend/logs"
 
 # 3. Start fresh clean databases
 echo "[3/4] Starting fresh PostgreSQL, MongoDB, Neo4j, and Qdrant containers..."
-docker compose up -d --build
+docker compose up -d postgres mongodb neo4j qdrant mongo-express adminer
 
 # 4. Start development servers
 echo "[4/4] Starting development servers..."
