@@ -1,6 +1,6 @@
-# 📜 Grounded Citations & Progressive Reasoning System
+# 📜 Grounded Citations & Progressive Reasoning Specification
 
-This specification document details the design and implementation of InsightNote's core **Grounded Citation** mechanics and **Progressive Retrieval Log** console. It details how the system guarantees absolute semantic context truth, links vector-chunks directly to sub-pixel coordinates, and renders an interactive terminal-style reasoning UI.
+This specification document details the design and implementation of InsightNote's core **Grounded Citation** mechanics, the **Multi-Key Bulletproof Path Matching** system, and the **Progressive Retrieval Log** console. It outlines how the system guarantees absolute semantic context truth, links vector-chunks directly to sub-pixel coordinates, and renders an interactive terminal-style reasoning UI.
 
 ---
 
@@ -30,22 +30,50 @@ InsightNote solves this by linking **Qdrant Vector Points** directly to **Neo4j 
 
 ---
 
-## 🛠️ 2. Collapsible Progressive Reasoning (Terminal Console)
+## 🛡️ 2. Multi-Key Bulletproof Path Matching (Windows Path-Slashes Sync)
 
-To build user trust in corporate and medical applications, the AI must explain *how* it arrived at its conclusion. 
+One of the most complex challenges in multi-tier RAG systems is linking retrieved citations (which might be crawled URLs or local PDF file references) back to their original user-friendly titles or source addresses without exposing local directories.
+
+On **Windows Environments**, paths often use backslashes (`\`, e.g., `C:\Users\nguye\...\https___api.ai-box.vn_console.pdf`) in the persistent database, while the python asyncio RAG engine or Qdrant vector database returns forward slashes (`/`). Additionally, some queries return absolute paths while others return relative paths.
+
+To resolve this, InsightNote utilizes a **Multi-Key Bulletproof Matching** algorithm inside `insightnote_routes.py` to index each document under four distinct keys:
+
+```mermaid
+graph TD
+    A[Source Document] --> B{Multi-Key Registry}
+    B -->|Key 1: ID Match| C[doc_id: doc-7396df22...]
+    B -->|Key 2: Slash Sync| D[norm_key: C:/Users/nguye/.../api.pdf]
+    B -->|Key 3: Clean Base| E[base_key: api.pdf]
+    B -->|Key 4: URL Metadata| F[source_title: https://api.ai-box.vn/console]
+```
+
+### Path-Mapping & Citation Resolution Flow:
+*   **Step 1: Database Enqueue**: When crawling a URL, the original target address is preserved in the MongoDB `metadata.url` field, while the document file name is normalized (e.g. `api_ai-box_vn_console.pdf`).
+*   **Step 2: Dictionary Indexing**: During a chat query, `source_titles_by_path` is built by reading all active notebook sources. For each source, its `source_title` is set to its `metadata.url` (if it's a crawled URL), or its basename (if it's a PDF). This title is then mapped to four separate keys:
+    1.  The unique MongoDB `doc_id` (e.g., `doc-7396df22...`).
+    2.  The `normalized_path` (where all `\` are replaced with `/`).
+    3.  The lowercase `basename` (e.g., `https___api.ai-box.vn_console.pdf`).
+*   **Step 3: Citation Title Resolution**: When `_citation_title_from_reference` is called to render a citation card, it queries the dictionary sequentially. By prioritizing the **`doc_id`** first, it instantly matches the MongoDB document ID and returns the beautiful original URL (with `https://` prefix) as the citation title, bypassing generic fallback strings.
+
+---
+
+## 🔒 3. Absolute ID Redaction & Log Sanitization (Privacy Layer)
+
+To maintain a premium aesthetic and prevent exposing sensitive server directories or database structures, InsightNote implements a rigorous, regex-based privacy layer (`_sanitize_string` in the backend):
+
+1.  **Redacting Database Identifiers**: Automatically detects and strips raw database hashes like `doc-`, `chunk-`, `track-`, `src_`, `job_`, and `d-id:` prefixes from any progress messages before sending them to the UI.
+2.  **Path Trimming**: Windows-style and Unix-style absolute paths are automatically captured by regular expressions and stripped down to their clean, base filenames using `os.path.basename`.
+3.  **Metadata Hiding**: Removes raw JSON strings and parameters like `metadata={...}` from the log streams, ensuring the UI progressive logs remain completely readable, polished, and human-friendly.
+
+---
+
+## 🛠️ 4. Collapsible Progressive Reasoning (Terminal Console)
+
+To build user trust in corporate and legal applications, the AI must explain *how* it arrived at its conclusion.
 
 The middle chat panel features a collapsible **Retrieval & Reasoning Steps** console styled as an interactive, dark terminal window:
 
-```txt
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ >_ RETRIEVAL & REASONING STEPS (4)                                         ▲ │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ > Extracted key entities: Policy, Coverage, Main                             │
-│ > Retrieved Section 1.1 (Core Liability Coverage) from 'Insurance Policy'    │
-│ > Traversed graph path from Policy -> HAS_COVERAGE -> Coverage               │
-│ > Generated grounded answer with citations                                   │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+![Workspace Viewport](images/workspace_viewport.png)
 
 ### The Logs Generation Loop:
 *   During retrieval, the ZeRAG engine logs each milestone inside a Python string array (e.g. key extraction, similarity parameters, Cypher traversal queries, reranking outputs).
@@ -54,9 +82,12 @@ The middle chat panel features a collapsible **Retrieval & Reasoning Steps** con
 
 ---
 
-## 🎨 3. Grounded Citation Cards UI
+## 🎨 5. Premium Conversational UI Elements
 
-Each citation card is dynamically rendered in the chat panel with specific visual badges:
+The chat experience is enhanced by a suite of premium visual cues designed to mimic real-time human-like reasoning:
 
-1.  **Score Badge**: Displays the cosine similarity score of the segment normalized to a percentage (e.g. `Score: 95%`). If a reranker is active, this displays the reranker score.
-2.  **Context Tooltip**: Hovering or clicking a citation card zooms the WebGL 3D Graph camera in the right column directly onto the matching `Document` node, creating an interlocking cross-panel visual coordination!
+### 3-Dot Bouncing Pending Bubble
+When a question is submitted, instead of a rigid full-page placeholder skeleton, a compact assistant-styled bubble appears containing three bouncing dots. The dots use Tailwind's `animate-bounce` with staggered animation delays (`[animation-delay:-0.3s]`, `[animation-delay:-0.15s]`, etc.) to create a smooth, buttery wave effect that indicates active processing.
+
+### Inline Pulsing Streaming Cursor
+During active text streaming, a sleek, pulsing cursor block (`Cursor` component styled as an inline-block pulsing indigo bar) is appended precisely to the last line of the rendered text inside the `MarkdownRenderer`. As soon as the streaming finishes, the cờ `isStreaming` transitions to `false` and the cursor is immediately removed, leaving a perfectly clean output bubble.
