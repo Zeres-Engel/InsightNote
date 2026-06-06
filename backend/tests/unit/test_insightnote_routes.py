@@ -473,3 +473,20 @@ def test_url_citation_title_uses_doc_status_summary():
     )
 
     assert title == "NYPC"
+
+
+def test_url_citation_title_uses_metadata_url():
+    """URL citations should prioritize the original crawl URL mapped by doc_id over generic titles."""
+    from app.api.routers.insightnote_routes import _citation_title_from_reference
+
+    source_titles = {
+        "doc-url123": "https://api.ai-box.vn/",
+    }
+
+    title = _citation_title_from_reference(
+        {"reference_id": "doc-url123", "title": "API AI BOX"},
+        "",
+        source_titles,
+    )
+
+    assert title == "https://api.ai-box.vn/"
