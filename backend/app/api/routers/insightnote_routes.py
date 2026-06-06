@@ -351,21 +351,35 @@ def _sanitize_string(text: str) -> str:
     # with just the clean base filename
     def path_replacer(match):
         path_str = match.group(0)
-        return os.path.basename(path_str)
+        try:
+            suffix = ""
+            if path_str[-1] in {".", ",", ")", "]"}:
+                suffix = path_str[-1]
+                path_str = path_str[:-1]
+            return os.path.basename(path_str) + suffix
+        except:
+            return path_str
 
     # Windows path regex (capital letter drive, colon, backslashes, etc.)
-    text = re.sub(
-        r'[a-zA-Z]:\\[^\s"\'\{\}\[\]<>]*\\[^\s"\'\{\}\[\]<>]*', path_replacer, text
-    )
+    text = re.sub(r"\b[a-zA-Z]:\\[^\s:?*\"<>|]+", path_replacer, text)
     # Unix path regex
-    text = re.sub(r'/[^\s"\'\{\}\[\]<>]+/([^\s"\'\{\}\[\]<>]+)', path_replacer, text)
+    text = re.sub(r"(?<!\w)/[^\s:?*\"<>|]+/[^\s:?*\"<>|]+", path_replacer, text)
 
     # Strip out sensitive raw identifiers like doc-xxx, chunk-xxx, job-xxx, src-xxx
-    text = re.sub(r"\b(doc|chunk|job|src|ref|track)-[a-f0-9]{6,64}\b", "", text)
+    text = re.sub(r"\bdoc-[a-f0-9A-Za-z_-]+\b", "document", text)
+    text = re.sub(r"\bchunk-[a-f0-9A-Za-z_-]+\b", "chunk", text)
+    text = re.sub(r"\btrack-[a-f0-9A-Za-z_-]+\b", "track", text)
+    text = re.sub(r"\bsession_[a-f0-9A-Za-z_-]+\b", "session", text)
+    text = re.sub(r"\bjob_[a-f0-9A-Za-z_-]+\b", "job", text)
+    text = re.sub(r"\bsrc_[a-f0-9A-Za-z_-]+\b", "source", text)
+    text = re.sub(r"\bd-id:\s*[a-f0-9A-Za-z_-]+\b", "document", text)
+    text = re.sub(r"\bd-id:\s*", "", text)
 
     # Clean up excess spaces or metadata parameters
     text = re.sub(r"metadata\s*=\s*\{[^\}]*\}", "", text)
     text = re.sub(r"\s+", " ", text).strip()
+    # Fix double dots
+    text = re.sub(r"\.{2,}", ".", text)
     return text
 
 
@@ -1607,12 +1621,35 @@ def create_insightnote_routes(
         extracted_links: List[GraphLink] = []
         if notebook_id and (status == "processing" or status == "ready"):
             try:
-                real_nodes = (
-                    await notebook_rag.chunk_entity_relation_graph.get_all_nodes()
-                )
-                real_edges = (
-                    await notebook_rag.chunk_entity_relation_graph.get_all_edges()
-                )
+                doc_ids = list(docs_by_track.keys()) if docs_by_track else []
+                if doc_ids:
+                    workspace_label = (
+                        notebook_rag.chunk_entity_relation_graph._get_workspace_label()
+                    )
+                    async with notebook_rag.chunk_entity_relation_graph._driver.session(
+                        database=notebook_rag.chunk_entity_relation_graph._DATABASE,
+                        default_access_mode="READ",
+                    ) as session:
+                        # Fetch nodes belonging to these processed doc_ids only
+                        n_res = await session.run(
+                            f"MATCH (n:`{workspace_label}`) WHERE n.source_id IN $doc_ids RETURN n",
+                            doc_ids=doc_ids,
+                        )
+                        real_nodes = [record["n"] for record in await n_res.all()]
+
+                        # Fetch relations belonging to these processed doc_ids only
+                        e_res = await session.run(
+                            f"MATCH (a:`{workspace_label}`)-[r]->(b:`{workspace_label}`) WHERE r.source_id IN $doc_ids RETURN r, a.entity_id AS source, b.entity_id AS target",
+                            doc_ids=doc_ids,
+                        )
+                        real_edges = []
+                        for record in await e_res.all():
+                            edge = dict(record["r"])
+                            edge["source"] = record["source"]
+                            edge["target"] = record["target"]
+                            real_edges.append(edge)
+                else:
+                    real_nodes, real_edges = [], []
 
                 for idx, node in enumerate(real_nodes):
                     node_id = node.get("entity_id") or node.get("id") or f"node_{idx}"
@@ -2382,7 +2419,16 @@ def create_insightnote_routes(
                                 k: v
                                 for k, v in node.items()
                                 if k
-                                not in ["id", "entity_id", "entity_type", "description"]
+                                not in [
+                                    "id",
+                                    "entity_id",
+                                    "entity_type",
+                                    "description",
+                                    "source_id",
+                                    "doc_id",
+                                    "chunk_id",
+                                    "track_id",
+                                ]
                             },
                         },
                     )
@@ -2518,6 +2564,109 @@ def create_insightnote_routes(
     async def get_notebook_node_neighbors(notebook_id: str, node_id: str):
         """Expand neighboring links for a specific node under a notebook."""
         nb = await ensure_notebook_exists(notebook_id)
+
+        # Try fetching real undirected neighboring nodes/edges from Neo4j
+        try:
+            notebook_rag = await get_rag_instance(notebook_id, rag)
+            workspace_label = (
+                notebook_rag.chunk_entity_relation_graph._get_workspace_label()
+            )
+            async with notebook_rag.chunk_entity_relation_graph._driver.session(
+                database=notebook_rag.chunk_entity_relation_graph._DATABASE,
+                default_access_mode="READ",
+            ) as session:
+                query = f"""
+                MATCH (n:`{workspace_label}` {{entity_id: $node_id}})
+                OPTIONAL MATCH (n)-[r]-(m:`{workspace_label}`)
+                RETURN r, n, m
+                """
+                res = await session.run(query, node_id=node_id)
+                records = await res.all()
+
+                nodes_dict = {}
+                links = []
+
+                if records:
+                    # Initialize center node first
+                    center_node = records[0]["n"]
+                    if center_node:
+                        c_dict = dict(center_node)
+                        c_id = c_dict.get("entity_id") or node_id
+                        nodes_dict[c_id] = GraphNode(
+                            id=c_id,
+                            label=c_id,
+                            type=c_dict.get("entity_type") or "Concept",
+                            group=(c_dict.get("entity_type") or "concept").lower(),
+                            properties={
+                                "description": c_dict.get("description") or "",
+                                **{
+                                    k: v
+                                    for k, v in c_dict.items()
+                                    if k
+                                    not in [
+                                        "entity_id",
+                                        "entity_type",
+                                        "description",
+                                        "source_id",
+                                        "doc_id",
+                                        "chunk_id",
+                                        "track_id",
+                                    ]
+                                },
+                            },
+                        )
+
+                for idx, record in enumerate(records):
+                    m_node = record["m"]
+                    r_rel = record["r"]
+
+                    if m_node:
+                        m_dict = dict(m_node)
+                        m_id = m_dict.get("entity_id")
+                        if m_id and m_id not in nodes_dict:
+                            nodes_dict[m_id] = GraphNode(
+                                id=m_id,
+                                label=m_id,
+                                type=m_dict.get("entity_type") or "Concept",
+                                group=(m_dict.get("entity_type") or "concept").lower(),
+                                properties={
+                                    "description": m_dict.get("description") or "",
+                                    **{
+                                        k: v
+                                        for k, v in m_dict.items()
+                                        if k
+                                        not in [
+                                            "entity_id",
+                                            "entity_type",
+                                            "description",
+                                            "source_id",
+                                            "doc_id",
+                                            "chunk_id",
+                                            "track_id",
+                                        ]
+                                    },
+                                },
+                            )
+
+                    if r_rel and m_node:
+                        r_dict = dict(r_rel)
+                        m_id = dict(m_node).get("entity_id")
+                        links.append(
+                            GraphLink(
+                                id=f"edge_neighbor_{idx}",
+                                source=node_id,
+                                target=m_id,
+                                label=r_dict.get("description") or "RELATED_TO",
+                            )
+                        )
+
+                if nodes_dict:
+                    return GraphResponse(nodes=list(nodes_dict.values()), links=links)
+        except Exception as e:
+            logger.warning(
+                f"Failed to fetch real node neighbors from Neo4j: {e}. Falling back to mocks."
+            )
+
         is_resume = "resume" in notebook_id or "resume" in nb["name"].lower()
         nodes_universe = MOCK_NODES_RESUME if is_resume else MOCK_NODES_INSURANCE
         links_universe = MOCK_LINKS_RESUME if is_resume else MOCK_LINKS_INSURANCE

@@ -115,6 +115,43 @@ def format_datetime(dt: Any) -> Optional[str]:
     return dt.isoformat()
 
 
+def sanitize_log_message(msg: str) -> str:
+    if not msg:
+        return ""
+    import re
+    import os
+
+    # Convert absolute local paths to base filenames
+    def repl_path(match):
+        p = match.group(0)
+        try:
+            suffix = ""
+            if p[-1] in {".", ",", ")", "]"}:
+                suffix = p[-1]
+                p = p[:-1]
+            return os.path.basename(p) + suffix
+        except:
+            return p
+
+    # Match Windows absolute paths (e.g. C:\dir\file.ext) or Linux absolute paths (e.g. /dir/file.ext)
+    msg = re.sub(r'\b[a-zA-Z]:\\[^\s:?*\"<>|]+', repl_path, msg)
+    msg = re.sub(r'(?<!\w)/[^\s:?*\"<>|]+/[^\s:?*\"<>|]+', repl_path, msg)
+
+    # Redact raw database IDs
+    msg = re.sub(r'\bdoc-[a-f0-9A-Za-z_-]+\b', 'document', msg)
+    msg = re.sub(r'\bchunk-[a-f0-9A-Za-z_-]+\b', 'chunk', msg)
+    msg = re.sub(r'\btrack-[a-f0-9A-Za-z_-]+\b', 'track', msg)
+    msg = re.sub(r'\bsession_[a-f0-9A-Za-z_-]+\b', 'session', msg)
+    msg = re.sub(r'\bjob_[a-f0-9A-Za-z_-]+\b', 'job', msg)
+    msg = re.sub(r'\bsrc_[a-f0-9A-Za-z_-]+\b', 'source', msg)
+    msg = re.sub(r'\bd-id:\s*[a-f0-9A-Za-z_-]+\b', 'document', msg)
+    msg = re.sub(r'\bd-id:\s*', '', msg)
+
+    # Fix double dots
+    msg = re.sub(r'\.{2,}', '.', msg)
+    return msg
+
+
 router = APIRouter(
     prefix="/api/documents",
 )
@@ -2824,6 +2861,7 @@ def create_document_routes(
                     cleaned = re.sub(r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+\[?(INFO|WARNING|ERROR|DEBUG|SUCCESS)\]?\s*", "", cleaned)
                     cleaned = re.sub(r"^(INFO|WARNING|ERROR|DEBUG|SUCCESS)\s*:\s*", "", cleaned)
                     cleaned = cleaned.strip()
+                    cleaned = sanitize_log_message(cleaned)
 
                     if "Completed merging" in cleaned or "Completed processing file" in cleaned or "Enqueued document processing pipeline stopped" in cleaned:
                         return "Indexing completed successfully.", 100
@@ -3057,7 +3095,7 @@ def create_document_routes(
                     "job_id": job_id,
                     "status": status,
                     "steps": steps,
-                    "message": progress_msg,
+                    "message": sanitize_log_message(progress_msg),
                     "percent": percent,
                 }
 
@@ -3402,7 +3440,7 @@ def create_document_routes(
             # Convert history_messages to a regular list if it's a Manager.list
             # and limit to latest 1000 entries with truncation message if needed
             if "history_messages" in status_dict:
-                history_list = list(status_dict["history_messages"])
+                history_list = [sanitize_log_message(msg) for msg in status_dict["history_messages"]]
                 total_count = len(history_list)
 
                 if total_count > 1000:
