@@ -1273,6 +1273,7 @@ export default function App() {
             }
             showSources={showSources}
             onToggleSources={() => setShowSources(!showSources)}
+            hasSources={sources.length > 0}
           />
         </div>
 

@@ -197,6 +197,11 @@ def test_notebook_note_source_converts_and_enqueues(client, mock_rag, monkeypatc
         return mock_rag
 
     monkeypatch.setattr(routes, "get_rag_instance", fake_get_rag_instance)
+    monkeypatch.setattr(
+        routes,
+        "ensure_notebook_exists",
+        AsyncMock(return_value={"id": "notebook_fun", "name": "Fun Notebook"}),
+    )
     mock_pipeline_index_texts = AsyncMock()
     monkeypatch.setattr(routes, "pipeline_index_texts", mock_pipeline_index_texts)
     monkeypatch.setattr(routes.chat_history_db, "create_job", AsyncMock())
@@ -249,6 +254,11 @@ def test_notebook_url_source_crawls_and_indexes_text(client, mock_rag, monkeypat
         return mock_rag
 
     monkeypatch.setattr(routes, "get_rag_instance", fake_get_rag_instance)
+    monkeypatch.setattr(
+        routes,
+        "ensure_notebook_exists",
+        AsyncMock(return_value={"id": "notebook_fun", "name": "Fun Notebook"}),
+    )
     mock_pipeline_index_texts = AsyncMock()
     monkeypatch.setattr(routes, "pipeline_index_texts", mock_pipeline_index_texts)
     monkeypatch.setattr(routes.chat_history_db, "create_job", AsyncMock())

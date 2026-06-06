@@ -23,6 +23,7 @@ interface ChatPanelProps {
   isResume: boolean;
   showSources?: boolean;
   onToggleSources?: () => void;
+  hasSources: boolean;
 }
 
 const PRESET_BADGES_DOCUMENT = [
@@ -48,6 +49,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   isResume,
   showSources,
   onToggleSources,
+  hasSources,
 }) => {
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -152,30 +154,32 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       {/* Footer Controls / Input */}
       <div className="p-4 border-t border-slate-900 bg-slate-900/30">
         {/* Preset Badges */}
-        <div className="mb-3.5">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2 flex items-center gap-1">
-            <HelpCircle className="w-3.5 h-3.5 text-indigo-400" />
-            {latestAssistantSuggestions.length > 0
-              ? "Suggested Follow-Up Questions"
-              : `${isResume ? "Resume" : "Insurance"} Domain Preset Inquiries (Click to run)`}
+        {hasSources && activeBadges.length > 0 && (
+          <div className="mb-3.5 animate-fade-in">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2 flex items-center gap-1">
+              <HelpCircle className="w-3.5 h-3.5 text-indigo-400" />
+              {latestAssistantSuggestions.length > 0
+                ? "Suggested Follow-Up Questions"
+                : `${isResume ? "Resume" : "Insurance"} Domain Preset Inquiries (Click to run)`}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {activeBadges.map((badge, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => handleBadgeClick(badge)}
+                  disabled={isLoading}
+                  className={`text-[11px] font-medium border px-3 py-1.5 rounded-full transition duration-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                    latestAssistantSuggestions.length > 0
+                      ? "bg-emerald-950/25 hover:bg-emerald-500/10 hover:text-emerald-300 hover:border-emerald-500/40 border-emerald-900/40 text-emerald-300"
+                      : "bg-slate-900/80 hover:bg-indigo-500/10 hover:text-indigo-300 hover:border-indigo-500/40 border-slate-800 text-slate-400"
+                  }`}
+                >
+                  {badge}
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="flex flex-wrap gap-1.5">
-            {activeBadges.map((badge, idx) => (
-              <button
-                key={idx}
-                onClick={() => handleBadgeClick(badge)}
-                disabled={isLoading}
-                className={`text-[11px] font-medium border px-3 py-1.5 rounded-full transition duration-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                  latestAssistantSuggestions.length > 0
-                    ? "bg-emerald-950/25 hover:bg-emerald-500/10 hover:text-emerald-300 hover:border-emerald-500/40 border-emerald-900/40 text-emerald-300"
-                    : "bg-slate-900/80 hover:bg-indigo-500/10 hover:text-indigo-300 hover:border-indigo-500/40 border-slate-800 text-slate-400"
-                }`}
-              >
-                {badge}
-              </button>
-            ))}
-          </div>
-        </div>
+        )}
 
         {/* Toggle Controls */}
         <div className="flex items-center gap-2 mb-2.5 justify-end px-1">
