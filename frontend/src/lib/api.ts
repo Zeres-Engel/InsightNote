@@ -16,14 +16,7 @@ const API_BASE_URL =
 const BASE_URL = `${API_BASE_URL.replace(/\/$/, "")}/api`;
 
 // --- Sandbox Local Stores (for offline fallbacks) ---
-let localNotebooks: Notebook[] = [
-  {
-    id: "default",
-    name: "Default GraphRAG Workspace",
-    source_count: 0,
-    status: "empty",
-  },
-];
+let localNotebooks: Notebook[] = [];
 
 let localSources: Record<string, SourceListItem[]> = {
   default: [],
