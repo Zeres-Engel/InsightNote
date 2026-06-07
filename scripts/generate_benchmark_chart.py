@@ -106,7 +106,7 @@ ax1.grid(True, linestyle="--", alpha=0.15, color="#475569")
 fig.tight_layout()
 
 # Save path - overwrite existing
-OUTPUT_PATH = "backend/docs/images/rag_query_performance_benchmark.png"
+OUTPUT_PATH = "backend/docs/images/benchmark/rag_query_performance_benchmark.png"
 os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
 plt.savefig(OUTPUT_PATH, dpi=300, transparent=True)
-print("=== BENCHMARK CHART GENERATED SUCCESSFULLY IN backend/docs/images ===")
+print("=== BENCHMARK CHART GENERATED SUCCESSFULLY IN backend/docs/images/benchmark ===")
