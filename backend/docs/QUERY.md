@@ -31,11 +31,12 @@ PostgreSQL persists conversation turns (when DB online)
 | `conversation_id` | string | Optional — auto-resolved from Postgres if omitted |
 | `mode` | string | Default `"mix"` |
 | `stream` | boolean | Default `false`; frontend sends `true` for live streaming |
-| `rerank` | boolean | Default `true` |
+| `rerank` | boolean | Default `true`; bypasses or enables cross-encoder reranking |
 
-### Context rewriting
+### Context rewriting & Reranking Optimization
 
-ZeRAG uses chat history to rewrite follow-up questions into standalone queries before retrieval (e.g. "Does it cover motorcycles?" → full contextual question using prior turns).
+*   **Context Rewriting**: ZeRAG uses chat history to rewrite follow-up questions into standalone queries before retrieval (e.g. "Does it cover motorcycles?" → full contextual question using prior turns).
+*   **Reranking Filtration**: Once chunks, entities, and relationships are retrieved from Qdrant and Neo4j, they are sent to the **BAAI/bge-reranker-v2-m3** cross-encoder model. The model computes a precise semantic matching score for each segment. Only high-density, top-ranked chunks that pass the `rerank_score` are retained, ensuring that the context window contains zero redundant data and the LLM response is perfectly grounded.
 
 ---
 
@@ -54,11 +55,12 @@ Six modes are supported in the engine (`backend/app/core/base.py`):
 
 ### mix (default)
 
-1. Extract low-level and high-level keywords via LLM
-2. Qdrant dense vector search on low-level keywords
-3. Neo4j traversal on high-level keywords
-4. Merge contexts, deduplicate, rerank with cross-encoder
-5. Generate answer; return `graph_path` for 3D highlight
+1. Extract low-level and high-level keywords via LLM.
+2. Qdrant dense vector search on low-level keywords.
+3. Neo4j traversal on high-level keywords.
+4. Merge contexts, deduplicate, and **rerank with the BAAI/bge-reranker-v2-m3 cross-encoder**.
+5. Filter out low-scoring chunks (based on configured `rerank_score` threshold).
+6. Generate answer; return `graph_path` for 3D WebGL highlight.
 
 ### hybrid
 
