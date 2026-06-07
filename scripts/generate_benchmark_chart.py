@@ -67,7 +67,7 @@ ax2.set_ylim(0, 140)
 
 # Add titles and labels
 plt.title(
-    "ZeRAG Multi-Mode Performance Benchmark (RTX 3070 CUDA)",
+    "ZeRAG Multi-Mode Query Performance Benchmark (API Cloud-Bound)",
     fontsize=13,
     fontweight="bold",
     pad=20,
