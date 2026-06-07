@@ -5,115 +5,160 @@ description: Development guide, API architecture, database schemas, and testing 
 
 # InsightNote Development Skill
 
-Use this skill when you are asked to edit, debug, extend, or maintain the **InsightNote** codebase. It provides full context on the three-column layout, API routing contracts, database mapping, and integration layers.
+Use when editing, debugging, or extending the InsightNote codebase.
+
+**Setup guide (single source of truth):** [docs/SETUP.md](../../docs/SETUP.md)
 
 ---
 
-## 🏗 System Overview & Component Structure
+## System overview
 
-InsightNote is structured into a 2-tier application model with three main databases:
+| Layer | Stack | Port |
+|---|---|---|
+| Frontend | Vite + React + TypeScript + Tailwind | 3000 |
+| Backend | FastAPI + ZeRAG + MultiRAG (MinerU) | 8000 |
+| Databases | MongoDB, Neo4j (DozerDB), Qdrant, PostgreSQL | see SETUP.md |
 
-1.  **Frontend (Vite + React + TypeScript + Tailwind)**:
-    *   **Port**: `3000` (Dev server serves on `3000` via Docker or standard yarn/npm dev commands).
-    *   **Core UI Layout**: A fixed 3-column dashboard:
-        *   `Left (320px)`: Ingest controls (URL crawler, rich note editor, drag-n-drop PDF uploader) and document status index.
-        *   `Middle (Flex-1)`: Interactive chat console featuring markdown answers, grounded citation cards, terminal logs for retrieval metrics, and quick-preset action buttons.
-        *   `Right (480px)`: 3D Force-Directed WebGL Graph rendering (`react-force-graph-3d`) displaying Neo4j network relations, featuring dynamic path highlight, zoom controls, camera centering HUD, and detail drawer.
-    *   **Data Broker (`frontend/src/lib/api.ts`)**: Routes requests to `http://localhost:8000/api`. If the backend is down or the workspace is empty, it **transparently falls back to high-fidelity mocks in `mock-data.ts`** to guarantee a bulletproof demo experience.
+### Three-column layout
 
-2.  **Backend (FastAPI + Pydantic + ZeRAG Core)**:
-    *   **Port**: `8000` (FastAPI).
-    *   **Core Router (`backend/app/api/routers/insightnote_routes.py`)**: Defines Pydantic models and endpoints for sources, chats, and graph structures.
-    *   **Core RAG engine (`backend/app/core/zerag.py`)**: Interacts with MongoDB (KV & Doc statuses), Neo4j (DozerDB - Graph Database), and Qdrant (Vector DB).
+- **Left (320px):** `SourcesPanel.tsx` — ingest URL/note/PDF, pipeline badges
+- **Middle (flex-1):** `ChatPanel.tsx` — streaming chat, citations, retrieval steps
+- **Right (480px):** `KnowledgeGraphPanel.tsx` — 3D WebGL graph, path highlights
 
----
-
-## 🧭 Code Graph Navigation with Grapuco
-
-This project is indexed and analyzed with **Grapuco (Code Graph)**. When exploring the codebase or starting a development run, **never guess or perform brute-force searches**. Leverage the available Grapuco MCP tools:
-
-1.  **Initialize Project Workspace**: Run the `bootstrap` tool once at session startup using the `repositoryId` or `workspaceId` found inside `.grapuco/config.json` to properly map tools, skills, and related repositories.
-2.  **Search Symbols**: Use `grapuco_search_code` to find exact classes, FastAPI routers, React components, or core database handler functions.
-3.  **Inspect Symbol Context**: Call `get_symbol_context` or `get_dependencies` to map calling chains, heritage structures, and data flows before deep edits.
-4.  **Verify Data Movements**: Run `get_data_flows` to trace precise endpoint logic (e.g., from frontend API calls down to Neo4j/Qdrant queries).
-5.  **Assess Edit Risk**: Evaluate blast radius using `get_impact_analysis` or `blast_radius` on target files to avoid regressions across parallel modules.
+All HTTP calls go through **`frontend/src/lib/api.ts`**. Never call DBs from the frontend.
 
 ---
 
-## 🔌 API Endpoints Contract
+## Configuration
 
-All API communications are brokered through these standard endpoints:
+LLM/embedding/reranker settings come from **`backend/config/config.yaml`** (not bare docker-compose env vars).
 
-| Method | Endpoint | Request Body | Response JSON | Description |
-| :--- | :--- | :--- | :--- | :--- |
-| **GET** | `/api/health` | None | `{ "status": "ok", "service": "insightnote-backend" }` | Health diagnostic |
-| **POST** | `/api/sources` | `{ "workspace_id": "demo", "type": "url"\|"text"\|"pdf", "value": "string" }` | `{ "source_id": "string", "name": "string", "type": "string", "status": "string" }` | Ingests URL text, custom note, or registers PDF |
-| **POST** | `/api/sources/upload`| Form Data: `file: File` | Same as above | Processes actual PDF/TXT file upload via pipeline |
-| **GET** | `/api/sources` | None | `List[SourceListItem]` | Retrieves lists of documents with entity & chunk metrics |
-| **POST** | `/api/chat` | `{ "workspace_id": "demo", "message": "string" }` | `ChatResponse` (answer, citations, steps, graph_path) | Main chat interface. Translates keywords, queries Neo4j/Qdrant, and returns reasoning paths |
-| **GET** | `/api/graph` | None | `GraphResponse` (nodes, links) | Fetches complete Neo4j database or falls back to mock graph |
-| **GET** | `/api/graph/node/{id}` | None | `NodeDetailsResponse` (id, label, type, properties) | Fetches deep node properties for sliding drawer |
-| **GET** | `/api/graph/node/{id}/neighbors`| None | `GraphResponse` (connected nodes/links) | Expands the graph around a clicked node |
+`.env` at project root provides API keys referenced in YAML via `${VAR_NAME}`.
+
+See [docs/SETUP.md](../../docs/SETUP.md) for OpenAI and Gemini profiles.
 
 ---
 
-## 🎨 Graph Highlight & Animation Payload
+## API endpoints (primary)
 
-When the user queries the chatbot, the backend returns a `graph_path` indicating the traversed reasoning steps:
-```json
-{
-  "graph_path": {
-    "node_ids": ["policy_001", "coverage_012", "vehicle_accident_007", "motorcycle_003"],
-    "link_ids": ["edge_001", "edge_002", "edge_003"]
-  }
-}
+Router: `backend/app/api/routers/insightnote_routes.py`, prefix `/api`
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/api/health` | Health check |
+| GET/POST | `/api/notebooks` | List / create notebooks |
+| GET/DELETE | `/api/notebooks/{id}` | Get / delete notebook |
+| GET | `/api/notebooks/{id}/sources` | List sources |
+| POST | `/api/notebooks/{id}/sources/upload` | Upload file |
+| POST | `/api/notebooks/{id}/sources/url/stream` | Ingest URL (streaming) |
+| POST | `/api/notebooks/{id}/sources/note/stream` | Ingest note (streaming) |
+| POST | `/api/notebooks/{id}/sources/load-example` | Load example PDF (`path` field) |
+| DELETE | `/api/notebooks/{id}/sources/{source_id}` | Delete source |
+| GET | `/api/pipeline/jobs/{job_id}` | Pipeline progress |
+| GET | `/api/notebooks/{id}/graph` | Full graph |
+| GET | `/api/notebooks/{id}/graph/node/{node_id}` | Node details |
+| GET | `/api/notebooks/{id}/graph/node/{node_id}/neighbors` | Neighbors |
+| GET | `/api/notebooks/{id}/chat/history` | Chat history (Postgres) |
+| POST | `/api/notebooks/{id}/chat` | Chat (supports `stream: true`) |
+
+Legacy flat endpoints still exist: `/api/sources`, `/api/chat`, `/api/graph`.
+
+Full contract: [frontend/docs/API_CONTRACT.md](../../frontend/docs/API_CONTRACT.md)
+
+---
+
+## Pipeline steps
+
+| Source type | Steps |
+|---|---|
+| PDF / file | `load_file` → `document_understanding` → `vector_graph_sync` |
+| URL / note | `load_file` → `chunking` → `entity_extraction` → `vector_graph_sync` |
+
+---
+
+## Graph highlight rules
+
+| Mode | Color | When |
+|---|---|---|
+| `query` | Cyan `#38bdf8` | Chat reasoning path |
+| `ingest` | Emerald `#10b981` | Document reaches `ready` (one-shot) |
+
+Call `fgRef.current.refresh()` when `highlightPath` changes (WebGL cache).
+
+See [docs/GRAPH_VISUALIZATION.md](../../docs/GRAPH_VISUALIZATION.md)
+
+---
+
+## Query modes
+
+Default: `mix`. Also supported: `hybrid`, `local`, `global`, `naive`, `bypass`.
+
+See [backend/docs/QUERY.md](../../backend/docs/QUERY.md)
+
+---
+
+## Coding rules
+
+1. **Sandbox mode** — never crash when DB is down; keep `mock-data.ts` compatible
+2. **Decoupling** — all API calls in `api.ts` only
+3. **No raw IDs in UI** — strip `doc-`, `chunk-`, `job_`, paths from user-facing output
+4. **Citations** — only show documents explicitly cited in the answer
+5. **Build checks before done:**
+   - `cd frontend && npm run build`
+   - `conda activate gpu_env && cd backend && pytest tests/ -v`
+6. **Git** — develop on `develop` branch; never tag releases without user request
+
+Full agent rules: [AGENTS.md](../../AGENTS.md)
+
+---
+
+## Run commands
+
+```bash
+# Full Docker stack
+docker compose up -d --build
+
+# Local dev (Windows)
+scripts/run-dev.bat
+
+# Backend only
+conda activate gpu_env && cd backend && python server.py
+
+# Frontend only
+cd frontend && npm run dev
+
+# Tests
+task test:all
 ```
-The **`KnowledgeGraphPanel.tsx`** listens to this state and updates:
-*   **Path Node Styles**: Increases `val` from default `4` to `12`, paints node material as vibrant orange-gold (`#f59e0b`), and adds a halo glowing effect.
-*   **Path Link Styles**: Animates directional glow pulses traveling down active relationships (`linkDirectionalParticles={4}`, `linkDirectionalParticleSpeed={0.01}`).
-*   **Non-Path Elements**: Reduces opacity of all unrelated nodes and links to `0.15` to emphasize the reasoning trajectory.
 
 ---
 
-## 🛠 Guidelines for Coding Tasks
+## Documentation map
 
-When you are asked to make changes, adhere strictly to these rules:
-
-1.  **Do Not Break Sandbox Mode**: Ensure that any changes to API models, types, or components do not crash when running on local mock-data in `frontend/src/lib/mock-data.ts`. Maintain exact compatibility.
-2.  **Keep Frontend and Backend Decoupled**: Never call the database directly from the frontend; always channel queries through `/api/` routers. All API queries should reside strictly inside `frontend/src/lib/api.ts`.
-3.  **Validate Build & Type safety**:
-    *   To verify frontend compilation: Run `npm run build` in the `frontend` folder.
-    *   To verify backend test coverage: **MUST activate the GPU environment `gpu_env`** (e.g., `conda activate gpu_env`) and run `pytest tests/ -v` inside the `backend` folder. Running heavy GPU calculations on standard CPU environments is discouraged.
-    *   To verify backend schemas: Ensure Pydantic classes in `insightnote_routes.py` are strictly defined and correct.
-    *   To verify entire pipeline: Run E2E verification script: `C:/Users/nguye/anaconda3/envs/gpu_env/python.exe scripts/verify_backend_pipeline.py`.
-4.  **No Extraneous Packages**: Reuse Lucide icons, Framer Motion, and Tailwind classes. Do not install heavy dependencies unless explicitly authorized.
-5.  **Strict Git Flow Compliance**: 
-    *   All development and active edits must occur strictly on the `develop` branch.
-    *   The `release` branch is dedicated only to staging, regression testing, and pre-release validation.
-    *   `main` contains only fully-tested production releases.
-    *   Never create, tag, or push new git versions (like `v1.0.0` tags) without explicit commands from the Master Architect (User).
+| Doc | Topic |
+|---|---|
+| [docs/SETUP.md](../../docs/SETUP.md) | Configuration |
+| [docs/DOCKER.md](../../docs/DOCKER.md) | Docker workflows |
+| [docs/CONFIG_REFERENCE.md](../../docs/CONFIG_REFERENCE.md) | All config keys |
+| [docs/DATABASE_SCHEMA.md](../../docs/DATABASE_SCHEMA.md) | DB schemas |
+| [docs/TROUBLESHOOTING.md](../../docs/TROUBLESHOOTING.md) | Common issues |
+| [docs/DEMO_DATA.md](../../docs/DEMO_DATA.md) | Sandbox & mock data |
+| [CONTRIBUTING.md](../../CONTRIBUTING.md) | Dev workflow |
+| [frontend/docs/API_CONTRACT.md](../../frontend/docs/API_CONTRACT.md) | REST API |
+| [frontend/docs/DEVELOPMENT_GUIDE.md](../../frontend/docs/DEVELOPMENT_GUIDE.md) | Frontend architecture |
+| [backend/docs/RAG_ARCHITECTURE.md](../../backend/docs/RAG_ARCHITECTURE.md) | RAG engine |
+| [backend/docs/QUERY.md](../../backend/docs/QUERY.md) | Query modes |
+| [docs/GROUNDED_CITATIONS.md](../../docs/GROUNDED_CITATIONS.md) | Citations & streaming |
+| [docs/GRAPH_VISUALIZATION.md](../../docs/GRAPH_VISUALIZATION.md) | WebGL graph |
 
 ---
 
-## ⚡ Diagnostic & Execution Cheat-sheet
+## Grapuco MCP
 
-To run diagnostic commands, use the terminal:
+Use Grapuco tools for code navigation instead of brute-force greps:
+- `grapuco_search_code` — find symbols
+- `get_symbol_context` / `get_dependencies` — caller chains
+- `get_data_flows` — endpoint → DB flows
+- `get_impact_analysis` — blast radius before edits
 
-*   **Launch Full Docker Stack**:
-    ```bash
-    docker compose up --build
-    ```
-*   **Run Backend Locally**:
-    ```bash
-    cd backend
-    python server.py
-    ```
-*   **Run Frontend Locally**:
-    ```bash
-    cd frontend
-    npm run dev
-    ```
-*   **Wipe Volume Caches**:
-    ```bash
-    docker compose down -v
-    ```
+Bootstrap with `repositoryId` from `.grapuco/config.json`.

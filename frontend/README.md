@@ -1,75 +1,105 @@
-# 🎨 InsightNote Frontend — Connected GraphRAG Workspace Client
+# InsightNote Frontend
 
-This is the front-end application of **InsightNote**, constructed using **Vite + React + TypeScript + Tailwind CSS** and **Three.js / react-force-graph-3d** for high-density, real-time interactive knowledge graph visualization.
+Vite + React + TypeScript client for the three-column GraphRAG workspace.
 
 ---
 
-## 🏗 Three-Column Responsive Layout
-
-Our premium, glassmorphic workspace features a locked three-column layout, perfectly segmenting raw ingestion, reasoning conversations, and visual relations.
+## Layout
 
 ```txt
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ InsightNote                                      Workspace: Active Notebook  │
-├───────────────────────┬─────────────────────────────────┬────────────────────┤
-│ Sources               │ Ask InsightNote                  │ Knowledge Graph    │
-│                       │                                 │                    │
-│ Add URL               │ ChatGPT-style messages           │ 3D Neo4j Graph     │
-│ Add Text Note         │ Citations (Bbox highlighting)   │                    │
-│ Upload PDF            │ Retrieval steps (Collapsible)   │ Highlighted path   │
-│ Trash bin (Delete)    │ Composer                         │ Node details       │
-│                       │                                 │ Navigation Guide   │
+┌───────────────────────┬─────────────────────────────────┬────────────────────┐
+│ SourcesPanel (320px)  │ ChatPanel (flex-1)            │ KnowledgeGraph (480px)
+│ URL / note / PDF      │ Streaming chat + citations      │ 3D force-directed graph
+│ Pipeline badges       │ Retrieval steps (collapsible)   │ Path highlights
+│ Delete sources        │ Preset action pills             │ Node properties drawer
 └───────────────────────┴─────────────────────────────────┴────────────────────┘
 ```
 
-### 1. Left Column (Sources Panel — 320px)
-*   **Multi-Notebook Switcher**: Choose from different Notebooks. Each triggers workspace isolation, isolating document directories, Qdrant vectors, and PostgreSQL chat histories.
-*   **Source Crawling**: Ingest clean text from URLs or add instant rich Markdown notes.
-*   **PDF Ingestion**: Drag-n-drop PDFs directly into the workspace. Shows live progress status badges synced with our backend task pipeline.
-*   **Source Index**: List, view metrics (chunk size, entity relationships extracted), and delete files cleanly via the garbage bin buttons.
-
-### 2. Middle Column (Chat Q&A Console — Flex-1)
-*   **PostgreSQL Conversation Threads**: Fully persistent, multi-session chat historical records.
-*   **Double-Payload Dynamic Stream**:
-    *   **Phase 1**: Instantly receives and formats metadata, generating **Grounded Citations** cards and drawing active reasoning routes.
-    *   **Phase 2**: Streams individual text tokens from the isolated LLM generator, rendering rich markdown with syntax code highlighting.
-*   **Collapsible Retrieval Steps**: Unpacks the black-box of GraphRAG, explaining exact vector metrics, graph traversals, and reranking threshold logs.
-
-### 3. Right Column (Knowledge Graph Panel — 480px)
-*   **WebGL 3D Interactive Force Graph**: Complete zoom, rotation, and panning using WebGL.
-*   **Slow-Rotation Camera Overlay**: Automatically rotates the graph slowly to provide a beautiful, cinematic overview of concepts.
-*   **Interactive Traversal Highlighting**: Chatting with the AI dims the inactive canvas, lighting up the active reasoning path in gold, with glowing directional particle pulses moving down relationships.
-*   **Properties Sliding Tray**: Clicking any node slides up a comprehensive inspect panel revealing deep attributes and confidence ratings.
-*   **Automatic ResizeObserver**: Listens to column sizing and auto-adjusts the 3D canvas on the fly, centering nodes perfectly.
+State is coordinated centrally in **`App.tsx`** — pillars communicate via shared props, not direct API calls to each other.
 
 ---
 
-## 📖 Sub-Folder Documentation
+## Directory structure
 
-For deeper developer setups, please explore:
-*   📘 **[`frontend/docs/API_CONTRACT.md`](docs/API_CONTRACT.md)**: Query parameters, upload payloads, and response JSON formats.
-*   📘 **[`frontend/docs/DEVELOPMENT_GUIDE.md`](docs/DEVELOPMENT_GUIDE.md)**: Component directory structures, React state hook bindings, and WebGL graph styling variables.
+```txt
+frontend/
+├── src/
+│   ├── App.tsx                        # Layout hub, notebook state, pipeline polling
+│   ├── components/
+│   │   ├── sources/SourcesPanel.tsx   # Pillar 1 — ingestion
+│   │   ├── chat/ChatPanel.tsx         # Pillar 2 — chat & citations
+│   │   └── graph/KnowledgeGraphPanel.tsx  # Pillar 3 — WebGL graph
+│   └── lib/
+│       ├── api.ts                     # HTTP broker (all backend calls)
+│       ├── mock-data.ts               # Sandbox fallback data
+│       └── types.ts                   # Shared TypeScript interfaces
+├── docs/
+│   ├── API_CONTRACT.md
+│   └── DEVELOPMENT_GUIDE.md
+├── vite.config.ts                     # Port 3000, env injection
+└── Dockerfile
+```
 
 ---
 
-## ⚡ Quick Start
+## API broker
 
-### 1. Installation
-Ensure Node.js (v18+) is installed.
+All backend communication goes through **`frontend/src/lib/api.ts`**.
+
+- Base URL: `http://localhost:8000/api` (override via `NEXT_PUBLIC_API_BASE_URL` in `.env`)
+- On fetch failure → transparent fallback to `mock-data.ts` local stores
+- Never call databases directly from components
+
+---
+
+## Running locally
+
 ```bash
 cd frontend
 npm install
-```
-
-### 2. Run Development Server
-```bash
 npm run dev
 ```
-Open `http://localhost:3000` inside your browser.
 
-### 3. Build for Production
-To compile and test type-safety before pushing to git:
+Open **http://localhost:3000**
+
+### Production build
+
 ```bash
 npm run build
 ```
-The compiled build is output to the `/dist` folder.
+
+Output: `frontend/dist/`
+
+---
+
+## Docker
+
+Frontend runs in Docker via root `docker-compose.yml` on port 3000 with hot-reload volume mount.
+
+```bash
+docker compose up -d frontend
+```
+
+---
+
+## Documentation
+
+| Document | Content |
+|---|---|
+| [docs/API_CONTRACT.md](docs/API_CONTRACT.md) | REST endpoints & JSON schemas |
+| [docs/DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md) | Component architecture & WebGL details |
+| [../docs/SETUP.md](../docs/SETUP.md) | Environment configuration |
+| [../docs/DEMO_DATA.md](../docs/DEMO_DATA.md) | Sandbox & mock data |
+| [../docs/GRAPH_VISUALIZATION.md](../docs/GRAPH_VISUALIZATION.md) | Graph highlight colors & particles |
+
+---
+
+## Key dependencies
+
+| Package | Purpose |
+|---|---|
+| `react-force-graph-3d` | 3D WebGL graph |
+| `three@^0.184.0` | Single Three.js instance (deduplicated) |
+| `framer-motion` | Chat panel animations |
+| `lucide-react` | Icons |
+| `pdfjs-dist` / `react-pdf` | PDF citation viewer |

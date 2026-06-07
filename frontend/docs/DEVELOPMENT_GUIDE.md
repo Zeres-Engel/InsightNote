@@ -1,126 +1,178 @@
-# 🎨 InsightNote - Frontend Development Guide
+# Frontend Development Guide
 
-Welcome to the **InsightNote** Frontend development guide. This document provides a deep, comprehensive overview of the Frontend structure, the 3-column layout coordination, WebGL 3D Graph optimizations, and the offline fallback engine.
+Architecture reference for the InsightNote Vite + React client.
 
 ---
 
-## 🏗️ 1. Project Directory Layout
-
-The frontend is structured to keep UI presentation, state coordination, and data ingestion strictly modularized:
+## Project layout
 
 ```txt
-frontend/
-├── docs/
-│   ├── API_CONTRACT.md         # Full request/response API specifications
-│   └── DEVELOPMENT_GUIDE.md    # [This File] Frontend architecture guide
-├── src/
-│   ├── components/
-│   │   ├── chat/
-│   │   │   └── ChatPanel.tsx   # Pillar 2: Copilot Chat with Citations & Steps
-│   │   ├── graph/
-│   │   │   └── KnowledgeGraphPanel.tsx # Pillar 3: WebGL 3D relation graph
-│   │   └── sources/
-│   │       └── SourcesPanel.tsx # Pillar 1: Ingest panel & pipeline tracker
-│   ├── lib/
-│   │   ├── api.ts              # Data broker connecting to FastAPI (with fallbacks)
-│   │   ├── mock-data.ts        # Dynamic mock stores (Insurance & Resume Q&A)
-│   │   └── types.ts            # Shared strictly-typed TypeScript definitions
-│   ├── App.tsx                 # Core Hub orchestrating layout & state sync
-│   ├── index.css               # Global Tailwind CSS configurations
-│   └── main.tsx                # React ReactDOM bootstrapper
-├── Dockerfile                  # Production-ready docker environment
-├── tailwind.config.js          # Tailwind theme and accent palette config
-└── vite.config.ts              # Vite bundle configuration
+frontend/src/
+├── App.tsx                     # Central state hub
+├── components/
+│   ├── sources/SourcesPanel.tsx
+│   ├── chat/ChatPanel.tsx
+│   └── graph/KnowledgeGraphPanel.tsx
+└── lib/
+    ├── api.ts                  # All HTTP calls + sandbox fallback
+    ├── mock-data.ts            # Offline demo data
+    └── types.ts                # Shared interfaces
 ```
 
 ---
 
-## 🎨 2. The 3-Column State Coordination (`App.tsx`)
-
-`App.tsx` acts as the single source of truth for the entire workspace. To prevent component lag and ensure reactive rendering, the three columns communicate solely by listening to central state variables:
+## State coordination (`App.tsx`)
 
 ```txt
-                       ┌───────────────┐
-                       │    App.tsx    │ (Coordinating Hub)
-                       └───────┬───────┘
-            ┌──────────────────┼──────────────────┐
-            ▼                  ▼                  ▼
-   ┌────────────────┐ ┌────────────────┐ ┌────────────────┐
-   │  SourcesPanel  │ │   ChatPanel    │ │  KnowledgeGraph│
-   │   (Pillar 1)   │ │   (Pillar 2)   │ │   (Pillar 3)   │
-   └────────────────┘ └────────────────┘ └────────────────┘
+                    App.tsx
+        ┌─────────────┼─────────────┐
+        ▼             ▼             ▼
+  SourcesPanel   ChatPanel   KnowledgeGraphPanel
 ```
 
-*   **Pillar 1 (Left: Ingestion)**: Triggers file/URL upload. When indexing, it monitors the `pipelineJob` status, which is polled inside a React `useEffect` interval (every 1.5 seconds) in `App.tsx`.
-*   **Pillar 2 (Middle: Copilot Chat)**: Collects text queries, appends full conversation history, and invokes `api.askChat`. On response, it updates `messages` and passes the traversed `graph_path` back to `App.tsx`.
-*   **Pillar 3 (Right: 3D Graph)**: Listens to the `graphData` and `highlightPath` states. It displays active reasoning paths using pulsing glowing particles traveling along the links and centers the camera automatically.
+| State | Owner | Consumers |
+|---|---|---|
+| `notebooks`, `activeNotebook` | App | SourcesPanel, header |
+| `sources`, `pipelineJobs` | App | SourcesPanel (polls jobs every ~1.5s) |
+| `messages`, `chatLoading` | App | ChatPanel |
+| `graphData`, `highlightPath` | App | KnowledgeGraphPanel |
+
+**Rule:** pillars never call each other directly — they receive callbacks and props from `App.tsx`.
+
+### Pipeline polling
+
+When `activeJobIds` is non-empty, `App.tsx` runs a `useEffect` interval polling `api.getPipelineStatus(jobId)`. On `ready`, it refreshes sources and graph, then sets an emerald ingest highlight on new nodes.
 
 ---
 
-## 🌐 3. WebGL 3D Graph Optimization & Controls (`KnowledgeGraphPanel.tsx`)
+## API broker (`api.ts`)
 
-The WebGL 3D Graph uses `react-force-graph-3d` powered by **ThreeJS**. The following high-performance enhancements are implemented:
-
-1.  **Deduplicated ThreeJS Engine**: The dependencies are synchronized at `three@^0.184.0` in `package.json` to prevent multiple conflicting instances of ThreeJS. This guarantees WebGL canvases render cleanly without throwing black screens.
-2.  **Parent Dimension Measurement (`ResizeObserver`)**: A custom `ResizeObserver` is attached to the parent div container. It dynamically feeds pixel dimensions (`width` and `height`) to the `<ForceGraph3D>` component. This aligns the camera coordinate center precisely to the visual area of the right panel, preventing graph nodes from shifting off-screen.
-3.  **Auto slow-rotation camera**: Utilizes the native ThreeJS `OrbitControls` auto-rotation:
-    ```typescript
-    const controls = fgRef.current.controls();
-    if (controls) {
-      controls.autoRotate = true;
-      controls.autoRotateSpeed = 0.5; // slow, gentle, buttery-smooth rotation
-    }
-    ```
-    This slow rotation engages the viewer. Dragging with the mouse naturally overrides it and resumes once mouse interaction ends.
-4.  **Directional arrows & Curvatures**:
-    *   `linkCurvature={0.15}` curves the relationship lines, creating an elegant, organic visual network instead of straight overlapping lines.
-    *   `linkDirectionalArrowLength={3.5}` and `linkDirectionalArrowRelPos={1.0}` display arrowhead directories indicating the flow of relationship dependencies.
-
----
-
-## 🛡️ 4. Dynamic Sandbox Fallback Architecture (`api.ts`)
-
-A key pillar of InsightNote's robustness is **transparent error boundary switching** at the API broker level:
+All backend calls live here. Components must not use `fetch()` directly.
 
 ```typescript
-export async function getGraph(notebookId: string): Promise<GraphResponse> {
-  try {
-    const res = await fetch(`${BASE_URL}/notebooks/${notebookId}/graph`);
-    if (res.ok) return await res.json();
-    throw new Error();
-  } catch (e) {
-    // If backend is unreachable or returns non-ok, transparently fall back
-    console.warn("Backend down. Loading mock graph data instead.");
-    return notebookId.includes("resume") 
-      ? { nodes: resumeNodes, links: resumeLinks }
-      : { nodes: [...MOCK_NODES], links: [...MOCK_LINKS] };
-  }
-}
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+const BASE_URL = `${API_BASE_URL.replace(/\/$/, "")}/api`;
 ```
 
-*   **Self-healing Local Stores**: In fallback mode, `api.ts` maintains its own `let` stores (`localNotebooks` and `localSources`) representing local states.
-*   **Wiped Items Sync**: When a user clicks **Delete Document** or **Delete Notebook** in fallback mode, `api.ts` runs a `.filter` array re-assignment on its local store, immediately updating the UI as if a real database transaction successfully completed.
+Key functions:
+
+| Function | Endpoint |
+|---|---|
+| `checkBackendHealth()` | `GET /api/health` |
+| `listNotebooks()` | `GET /api/notebooks` |
+| `createNotebook(name)` | `POST /api/notebooks` |
+| `listSources(notebookId)` | `GET /api/notebooks/{id}/sources` |
+| `uploadFile(notebookId, file)` | streaming upload |
+| `addUrlStream(notebookId, url)` | URL stream |
+| `addNoteStream(notebookId, title, content)` | note stream |
+| `getPipelineStatus(jobId)` | `GET /api/pipeline/jobs/{id}` |
+| `getGraph(notebookId)` | `GET /api/notebooks/{id}/graph` |
+| `askChat(notebookId, message, history, onChunk)` | `POST /api/notebooks/{id}/chat` |
+| `getChatHistory(notebookId)` | `GET /api/notebooks/{id}/chat/history` |
+
+On error → fallback to `localNotebooks` / `localSources` / mock graph data.
 
 ---
 
-## ⚡ 5. Setup & Launch Instructions
+## Chat panel (`ChatPanel.tsx`)
 
-### 1. Local Run
-To run the frontend dev server locally on your host machine:
+- Renders markdown answers with syntax highlighting
+- Citation cards below answers (grounded sources only)
+- Collapsible retrieval steps (monospace terminal style)
+- **Pending:** 3 bouncing dots in assistant bubble
+- **Streaming:** pulsing indigo cursor on last line until complete
+
+Chat history:
+1. Loaded from Postgres via `getChatHistory()` on notebook switch
+2. Cached in `localStorage` keyed by notebook ID as offline fallback
+
+---
+
+## Graph panel (`KnowledgeGraphPanel.tsx`)
+
+Built on `react-force-graph-3d` + `three@^0.184.0`.
+
+### Highlight colors
+
+| Mode | Color | Trigger |
+|---|---|---|
+| Query reasoning | Cyan `#38bdf8` | Chat `graph_path.mode = "query"` |
+| Ingest complete | Emerald `#10b981` | Document reaches `ready` |
+| Manual focus | Cyan | User clicks node |
+
+### Required refresh on highlight change
+
+```typescript
+useEffect(() => {
+  if (fgRef.current) {
+    fgRef.current.refresh();
+  }
+}, [highlightPath]);
+```
+
+Without this, stale link colors and particles persist in the WebGL cache.
+
+### Auto-rotation
+
+```typescript
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.5;
+```
+
+Pauses during mouse drag.
+
+### ResizeObserver
+
+Measures parent container and passes `width`/`height` to `<ForceGraph3D>` so the canvas centers correctly when the panel resizes.
+
+---
+
+## Sources panel (`SourcesPanel.tsx`)
+
+- Notebook switcher
+- URL input, rich note editor, PDF drag-and-drop
+- Source list with status badges (`processing` / `ready` / `failed`)
+- Delete button (garbage bin) per source
+
+Progress messages are sanitized — no raw IDs or file paths shown.
+
+---
+
+## Vite configuration
+
+`vite.config.ts`:
+- Dev server port **3000**, host `true` (Docker-compatible)
+- Injects `NEXT_PUBLIC_API_BASE_URL` at build time
+- Local dev middleware: `/api/upload-local`, `/api/local-files` for PDF viewer
+
+---
+
+## Environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | Backend base (without `/api`) |
+| `VITE_API_BASE_URL` | set in docker-compose | Same purpose in Docker |
+
+---
+
+## Build & lint
+
 ```bash
 cd frontend
 npm install
-npm run dev
+npm run dev       # development
+npm run build     # tsc + vite build (required before push)
 ```
-The server will boot up and serve the Vite application on port `3000`.
 
-### 2. Docker Compose Stack
-The frontend is pre-packaged with a hot-reload volume mount inside the general docker-compose configuration.
-To spin up the entire multi-notebook stack (databases, backend FastAPI, and Vite frontend):
-```bash
-docker compose up -d --build
-```
-*   **Vite Dev Server URL**: `http://localhost:3000`
-*   **FastAPI Backend URL**: `http://localhost:8000`
-*   **Neo4j Browser URL**: `http://localhost:7474`
-*   **Mongo Express admin URL**: `http://localhost:8081`
+From project root: `task app:lint-frontend`
+
+---
+
+## Related docs
+
+- [API_CONTRACT.md](API_CONTRACT.md) — REST schemas
+- [../../docs/GRAPH_VISUALIZATION.md](../../docs/GRAPH_VISUALIZATION.md) — WebGL details
+- [../../docs/SETUP.md](../../docs/SETUP.md) — backend configuration
+- [../../AGENTS.md](../../AGENTS.md) — UI rules for agents

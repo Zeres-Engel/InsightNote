@@ -1,5 +1,7 @@
 # 🤖 Developer Agent Guidelines (AGENTS.md)
 
+> **Configuration & setup:** [docs/SETUP.md](docs/SETUP.md) · **API contract:** [frontend/docs/API_CONTRACT.md](frontend/docs/API_CONTRACT.md) · **Database schema:** [docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md)
+
 ## 👑 Project Ownership & Authority Rule
 *   **The Master Architect**: The User is the **sole creator, lead developer, and absolute best architect** of the InsightNote workspace. This is their dedicated solo project.
 *   **Agent's Mission**: The AI agent operates strictly as an elite co-pilot. Your primary goal is to support the Master Architect in exploring, refining, upgrading, and implementing high-value features according to their exact vision. Never alter or degrade code without thorough justification.
@@ -79,7 +81,7 @@ InsightNote consists of three parallel, loosely coupled pillars that form a unif
 *   **Thorough Testing Before Push/PR**: No code is to be pushed or integrated unless it has undergone thorough local validation:
     1.  Frontend build is validated successfully: `cd frontend && npm run build`
     2.  All backend tests pass cleanly in `gpu_env`: `cd backend && pytest tests/ -v`
-    3.  RAG E2E pipeline verification scripts run PASS: `C:/Users/nguye/anaconda3/envs/gpu_env/python.exe scripts/verify_backend_pipeline.py`
+    3.  RAG E2E pipeline verification: `conda activate gpu_env && cd backend && pytest tests/ -v`
 
 ---
 

@@ -1,114 +1,151 @@
-# 🌲 Multi-Workspace GraphRAG Engine Architecture (RAG_ARCHITECTURE.md)
+# RAG Architecture
 
-Welcome to the architectural core of **InsightNote**—the next-generation **Multi-Notebook GraphRAG Knowledge Workspace**. 
-
-Unlike standard "ChatPDF" clones that perform naive character splitting and lose all layout, structural, and semantic context, InsightNote models documents as highly structured **Hierarchical Knowledge Trees** linked to a **Multi-Turn Reasoning Graph**.
-
-By orchestrating **PostgreSQL** (Chat History & Workspaces), **MongoDB** (Metadata & Document Status), **Neo4j** (DozerDB Graph), and **Qdrant** (Vector DB) on a per-workspace basis, the system delivers absolute citation groundedness, zero hallucinations, and dynamic interactive graph-highlighted responses.
-
----
-
-## 🎨 Core Architectural Blueprint
-
-Here is how InsightNote’s **Layout-Aware Coordinate Processing Pipeline** ingests documents, extracts complex knowledge networks, and stores them securely under isolated multi-workspace databases:
+Core architecture of the InsightNote multi-notebook GraphRAG engine (ZeRAG + MultiRAG).
 
 ![Workspace Viewport](../../docs/images/workspace_viewport.png)
 
+---
+
+## System overview
+
+InsightNote models documents as **hierarchical knowledge trees** with layout coordinates, stored across four databases with per-notebook isolation.
+
 ```mermaid
 graph TD
-    subgraph Multi_Workspace_Isolation [Dynamic Multi-Workspace Physical Database Isolation]
-        Postgres[(PostgreSQL<br>Isolated Conversational Sessions)]
-        MongoDB[(MongoDB<br>Isolated Metadata & status)]
-        Neo4j[(Neo4j GraphDB<br>Dynamic Label Workspace Isolation)]
-        Qdrant[(Qdrant VectorDB<br>Isolated Namespace Collections)]
-    end
-    
-    subgraph Coordinate_Parsing_Pipeline [Layout-Aware Coordinate Processing Pipeline]
-        PDF[Multimodal Document PDF/URL/Text] -->|Live User Ingestion| MinerU[MinerU Parser Engine]
-        MinerU -->|Sub-pixel bbox Coordinates| VisualBlocks[Visual Layout Blocks]
-        VisualBlocks -->|Sort & Group by Reading Order| HierarchicalTree[Hierarchical Parent-Child Tree]
-        
-        HierarchicalTree -->|Sync Chunks & bbox Hierarchies| Neo4j
-        HierarchicalTree -->|Index Dense Text Embeddings| Qdrant
-        HierarchicalTree -->|Track Ingest Status & Metadata| MongoDB
+    subgraph Isolation [Per-Notebook Isolation]
+        Postgres[(PostgreSQL — workspaces & chat)]
+        MongoDB[(MongoDB — doc status & KV)]
+        Neo4j[(Neo4j — graph + chunk tree)]
+        Qdrant[(Qdrant — vector collections)]
     end
 
-    subgraph Dual_Retrieval_Reasoning [Dual-Engine Semantic Retrieval & Reranking]
-        UserQuery([User Prompt]) --> ChatHistory[PostgreSQL Multi-turn Context Resolution]
-        ChatHistory --> KeywordExtractor[LLM High/Low-Level Keyword Extraction]
-        
-        KeywordExtractor -->|Low-Level Keywords| DenseVector[Qdrant Semantic Vector Retrieval]
-        KeywordExtractor -->|High-Level Keywords| GraphSearch[Neo4j Cypher Path Traversal]
-        
-        DenseVector --> ContextAggregator[Multi-Source Context Aggregator]
-        GraphSearch --> ContextAggregator
-        
-        ContextAggregator --> Reranker[BAAI BGE / Jina / Cohere Reranker Engine]
-        Reranker -->|Top-K High-Density Context| LLM[LLM Generator: OpenAI/Gemini/Ollama]
-        
-        LLM --> EventStream[Streaming Event Generator]
-        EventStream -->|1. Stream Citation Metadata & WebGL Reasoning Path| UI[3-Column Frontend Console]
-        EventStream -->|2. Stream Real-Time Answer Tokens| UI
+    subgraph Ingest [Ingestion Pipeline]
+        Doc[PDF / URL / Text] --> MinerU[MinerU via MultiRAG]
+        MinerU --> Tree[Hierarchical chunk tree]
+        Tree --> Neo4j
+        Tree --> Qdrant
+        Tree --> MongoDB
     end
-end
+
+    subgraph Query [Retrieval]
+        Prompt[User query] --> History[Postgres + chat_history payload]
+        History --> Keywords[LLM keyword extraction]
+        Keywords --> Vector[Qdrant dense search]
+        Keywords --> Graph[Neo4j traversal]
+        Vector --> Rerank[Reranker BGE/Jina/Cohere]
+        Graph --> Rerank
+        Rerank --> LLM[LLM generation]
+        LLM --> Stream[Streaming response + graph_path]
+    end
 ```
 
 ---
 
-## 💎 Premium Technology & Concurrency Highlights
+## Multi-workspace isolation
 
-### 🚀 1. Dynamic 4-DB Notebook Synchronization & Resilience
-InsightNote operates on a strict **Minimum vs. Maximum Database** fallback schema to guarantee total system health:
-*   **The Minimum Baseline (PostgreSQL + MongoDB)**: These core databases manage the baseline lifecycle of workspaces, conversant messages, and document ingestion status. If either Neo4j or Qdrant are offline, notebook creation, loading, and deletion will **continue to function smoothly**, degrading gracefully to standard vector-only RAG or high-fidelity local sandbox fallbacks instead of crashing with a 500 error.
-*   **The Maximum State (PostgreSQL + MongoDB + Neo4j + Qdrant)**: When all services are online, a newly created notebook instantly initializes isolated storages across all four systems:
-    *   **PostgreSQL**: Upserts notebook records and conversation sessions.
-    *   **MongoDB**: Auto-initializes isolated document status collection tables.
-    *   **Qdrant**: Initializes isolated collection collections based on the active `notebook_id` as the namespace.
-    *   **Neo4j**: Merges a specialized workspace metadata node and establishes dynamic workspace node label isolation to prevent cross-notebook graph leakage.
-*   **Surgical Notebook Deletion**: Deleting a notebook cleanly sweeps resources from all 4 backends: drops MongoDB collection prefixes, drops Qdrant collection namespaces, detach-deletes all nodes matching the Neo4j workspace label, and cascades-deletes PostgreSQL chat logs.
+Each notebook gets isolated storage:
 
-### ⚡ 2. Asyncio Lazy-Loading Priority Queue Concurrency
-One of the most complex bugs in asyncio FastAPI backends is the loop-mismatch error:
-`got Future <Future pending> attached to a different loop`
-This happens when async decorators (like our priority-limited LLM rate limiter `priority_limit_async_func_call`) instantiate their internal `asyncio.PriorityQueue`, `asyncio.Lock`, and `asyncio.Event` primitives at module import time, binding them to an import-time loop that differs from the runtime loop started by Uvicorn or background thread pools.
+| Database | Isolation mechanism |
+|---|---|
+| **PostgreSQL** | `notebook_workspaces`, `notebook_conversations`, `active_jobs` tables keyed by `notebook_id` |
+| **MongoDB** | Collection prefix `{notebook_id}_*` |
+| **Qdrant** | Collection namespace per notebook |
+| **Neo4j** | Dynamic workspace label on all nodes/relationships |
 
-InsightNote solves this completely using **Lazy-Initialization**:
-*   All asyncio primitives inside the function decorators are declared as `None` at import time.
-*   During runtime, when `wait_func` is first called, the system dynamically checks and instantiates all locks and queues under the **currently running event loop**:
-    ```python
-    if initialization_lock is None:
-        with threading.Lock():
-            if initialization_lock is None:
-                initialization_lock = asyncio.Lock()
-    ```
-*   This ensures 100% thread-safety, standardizes the execution loop, and allows parallel, unblocked ingestion of 100+ files, URLs, and notes concurrently with zero queue freezing!
+Deleting a notebook cascades: Postgres rows, Mongo collections, Qdrant namespace, and Neo4j nodes matching the workspace label.
 
-### 📊 3. Optimized targeted Indexing Graph Queries
-During real-time document indexing, polling full-graph statistics causes massive Cypher scan overhead. InsightNote optimizes this by only querying the graph nodes and links that belong to the active documents being processed:
+Implementation: `get_rag_instance()`, `purge_mongo_collections()`, and delete handlers in `insightnote_routes.py`.
+
+---
+
+## Database fallback tiers
+
+| Tier | Databases online | Behavior |
+|---|---|---|
+| **Minimum** | PostgreSQL + MongoDB | Notebook CRUD, doc status, chat history work; graph/vector features degrade |
+| **Maximum** | All four | Full GraphRAG: ingest, hybrid retrieval, 3D graph, grounded citations |
+| **Offline** | None / backend down | Frontend sandbox via `mock-data.ts` |
+
+Startup never crashes on DB failure — warnings are logged and degraded mode continues.
+
+---
+
+## Ingestion pipeline
+
+1. **Enqueue** — file/URL/note registered in Postgres `active_jobs` + Mongo doc status
+2. **Parse** — MultiRAG with MinerU extracts layout blocks with `bbox` coordinates
+3. **Chunk** — hierarchical parent-child tree (see [CHUNKING.md](CHUNKING.md))
+4. **Extract** — entities and relationships written to Neo4j
+5. **Embed** — text chunks indexed in Qdrant (dimension depends on embedding model)
+6. **Ready** — job status transitions to `ready`; frontend highlights new graph nodes in emerald
+
+### Pipeline progress steps (API)
+
+**PDF / file upload:**
+- `load_file` → `document_understanding` → `vector_graph_sync`
+
+**URL / text note:**
+- `load_file` → `chunking` → `entity_extraction` → `vector_graph_sync`
+
+Polled via `GET /api/pipeline/jobs/{job_id}`.
+
+---
+
+## Dual retrieval engine
+
+Default mode: **`mix`** — combines Qdrant vector search and Neo4j graph traversal, then reranks with a cross-encoder.
+
+Response includes:
+- `answer` — LLM-generated text
+- `citations` — grounded source chunks
+- `retrieval_steps` — human-readable audit log
+- `graph_path` — `{ node_ids, link_ids, mode: "query" }` for 3D highlight
+
+See [QUERY.md](QUERY.md) for all query modes.
+
+---
+
+## Asyncio concurrency
+
+LLM rate limiters use **lazy initialization** of `asyncio.Lock`, `PriorityQueue`, and `Event` inside the running event loop — avoiding the classic error:
+
+```
+got Future attached to a different loop
+```
+
+This allows parallel ingestion of many files without queue freezing.
+
+---
+
+## Optimized graph queries during ingest
+
+Full-graph scans are avoided during progressive indexing. Targeted Cypher restricts to active document IDs:
+
 ```cypher
 MATCH (n:`{workspace_label}`) WHERE n.source_id IN $doc_ids RETURN n
 ```
-This restricts the progressive graph building queries to microseconds, creating a buttery-smooth visual graph-growth rendering at the frontend.
-
-### 🔍 4. Undirected Neighbor Expansion API
-The neighboring nodes expansion API `/api/notebooks/{notebook_id}/graph/node/{node_id}/neighbors` performs an undirected Cypher traversal match:
-```cypher
-MATCH (n:`{workspace_label}` {entity_id: $node_id})
-OPTIONAL MATCH (n)-[r]-(m:`{workspace_label}`)
-RETURN r, n, m
-```
-It extracts the undirected adjacent relationships, sanitizes the properties (stripping `source_id`, `doc_id`, etc.), and gracefully degrades back to the mock node universe if Neo4j is offline or empty.
 
 ---
 
-## 🧭 Five Versatile Query Modes
+## Configuration reference
 
-InsightNote supports five distinct query modes tailored to different types of analysis:
+All settings: **`backend/config/config.yaml`** + **`.env`**
 
-| Mode | Core Engine | Best For | Description |
-| :--- | :--- | :--- | :--- |
-| **`mix`** | **Vector + Graph (Unified)** | General Workspace Q&A | Fetches dense vector chunks and traverses adjacent Neo4j entities. Highlights the reasoning path on the 3D WebGL graph. |
-| **`hybrid`** | **Multi-dimensional Context** | Deep Cross-Reference | Merges global relational patterns with local entity details using an optimized round-robin retrieval. |
-| **`local`** | **Deep Entity Retrieval** | Specific Fact Retrieval | Focuses tightly on extracted semantic entities and their immediate coordinates and chunks. |
-| **`global`** | **Thematic Cypher Traversal** | Structural Analysis | Evaluates high-level themes across the entire notebook by querying global relationships in the graph. |
-| **`naive`** | **Dense Vector Only** | Standard Search | Standard semantic search over Qdrant. Automatically triggers as a fallback if the Graph Database is offline, guaranteeing high availability. |
+Setup guide: **[../../docs/SETUP.md](../../docs/SETUP.md)**
+
+```yaml
+storage:
+  kv: "MongoKVStorage"
+  graph: "Neo4JStorage"
+  vector: "QdrantVectorDBStorage"
+  doc_status: "MongoDocStatusStorage"
+```
+
+---
+
+## Related docs
+
+- [MULTIMODAL_PARSING.md](MULTIMODAL_PARSING.md) — MinerU element types
+- [CHUNKING.md](CHUNKING.md) — bbox sorting & Neo4j tree
+- [QUERY.md](QUERY.md) — query modes & chat history
+- [../frontend/docs/API_CONTRACT.md](../../frontend/docs/API_CONTRACT.md) — REST API

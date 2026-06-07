@@ -1,104 +1,122 @@
-# 🔌 Advanced Query Methods & Multi-Turn Conversation Architecture
+# Query Modes & Chat History
 
-This specification document details the core conversational architecture and retrieval mechanics of InsightNote's RAG query engine. It explains the multi-turn chat history resolution and the four distinct query modes supported by the backend: `naive`, `local`, `global`, and `mix`.
+Conversational retrieval architecture: multi-turn history, query modes, and streaming responses.
 
 ---
 
-## 💬 1. Multi-Turn Conversation History Architecture
-
-Conversational RAG requires the LLM to understand contextual references across multiple message turns (e.g. resolving pronouns like "What are *its* exclusions?" referring to a previously mentioned "Motorcycle policy").
+## Chat history flow
 
 ```txt
-  ┌────────────────────────────────────────────────────────┐
-  │                   Vite Frontend                        │
-  │  (Saves messages array & persists in localStorage)      │
-  └───────────────────────────┬────────────────────────────┘
-                              │
-                              │ Post ChatRequest
-                              ▼
-  ┌────────────────────────────────────────────────────────┐
-  │                    FastAPI Router                      │
-  │     (Maps payload to chat_history: List[Dict])         │
-  └───────────────────────────┬────────────────────────────┘
-                              │
-                              │ Pass history to QueryParam
-                              ▼
-  ┌────────────────────────────────────────────────────────┐
-  │                    ZeRAG Query Engine                  │
-  │ (Summarizes history ➔ Extracts contextual keywords)    │
-  └────────────────────────────────────────────────────────┘
+Frontend (App.tsx)
+  ├── PostgreSQL via GET /api/notebooks/{id}/chat/history  (primary)
+  └── localStorage cache per notebook                          (offline fallback)
+              │
+              ▼
+POST /api/notebooks/{id}/chat
+  body: { message, chat_history, stream, mode, conversation_id }
+              │
+              ▼
+insightnote_routes.py  ──►  ZeRAG query engine
+              │
+              ▼
+PostgreSQL persists conversation turns (when DB online)
 ```
 
-### The Multi-Turn Pipeline:
-1.  **State Persistence**: The React frontend maintains the conversation thread inside the `messages` array, persisting it inside browser `localStorage` on a per-notebook basis.
-2.  **API Shipping**: When a user submits a query, the frontend maps the history into a structured Pydantic `ChatRequest`:
-    ```json
-    {
-      "message": "Does this policy cover motorcycle accidents?",
-      "chat_history": [
-        { "role": "user", "content": "Hello!" },
-        { "role": "assistant", "content": "Hi! How can I help you research insurance?" },
-        { "role": "user", "content": "Does this policy cover motorcycle accidents?" }
-      ]
-    }
-    ```
-3.  **Contextual Re-Writing**: The ZeRAG engine intercepts the `chat_history` and first requests the LLM to rewrite the current message into a standalone query. For example, *"Does this policy cover it?"* is rewritten into *"Does the main Insurance Policy cover motorcycle accidents?"* using prior conversation context. This rewritten query is then used for semantic database retrieval.
+### Request fields (`ChatRequest`)
+
+| Field | Type | Notes |
+|---|---|---|
+| `message` or `user_prompt` | string | Required — user question |
+| `chat_history` or `conversation_history` | array | Prior turns `{ role, content }` |
+| `conversation_id` | string | Optional — auto-resolved from Postgres if omitted |
+| `mode` | string | Default `"mix"` |
+| `stream` | boolean | Default `false`; frontend sends `true` for live streaming |
+| `rerank` | boolean | Default `true` |
+
+### Context rewriting
+
+ZeRAG uses chat history to rewrite follow-up questions into standalone queries before retrieval (e.g. "Does it cover motorcycles?" → full contextual question using prior turns).
 
 ---
 
-## 🧭 2. The Four RAG Query Modes
+## Query modes
 
-InsightNote supports four specialized RAG query modes, each optimized for different types of information abstraction:
+Six modes are supported in the engine (`backend/app/core/base.py`):
 
-| Mode | Database Target | Retrieval Approach | Best Suited For |
-| :--- | :--- | :--- | :--- |
-| **Naive (`naive`)** | Qdrant (Vector DB) | Standard Flat Dense Vector Similarity | Direct, single-paragraph lookup questions |
-| **Local (`local`)** | Neo4j (Graph DB) | Entity-Centric Neighbor Triplets | Relationship-heavy, specific entity lookups |
-| **Global (`global`)** | Neo4j (DozerDB) | Hierarchical Community Summary Scanning | Broad summaries, high-level thematic queries |
-| **Mix (`mix`)** | Qdrant + Neo4j | Hybrid Vector + Relation Traversals | Complex multi-hop reasoning (Default) |
+| Mode | Engines used | Best for |
+|---|---|---|
+| **`mix`** (default) | Qdrant + Neo4j + reranker | General Q&A, multi-hop reasoning |
+| **`hybrid`** | Local + global keyword paths | Deep cross-reference across entity levels |
+| **`local`** | Neo4j entity neighborhoods | Specific facts, relationship lookups |
+| **`global`** | Neo4j community summaries | Broad thematic questions |
+| **`naive`** | Qdrant only | Fast semantic search; fallback when graph is offline |
+| **`bypass`** | None (direct LLM) | Internal/debug — skips retrieval |
 
----
+### mix (default)
 
-### 1. Naive Mode (`naive`)
-This is the baseline flat vector RAG method. It completely bypasses the Neo4j knowledge graph.
-*   **Retrieval loop**: The query is converted into a vector and searched in Qdrant. The top $k$ chunks are retrieved and fed to the LLM.
-*   **Pros**: High retrieval speed, extremely simple.
-*   **Cons**: Lacks relational awareness; cannot answer questions requiring connection between different documents or distant entities.
+1. Extract low-level and high-level keywords via LLM
+2. Qdrant dense vector search on low-level keywords
+3. Neo4j traversal on high-level keywords
+4. Merge contexts, deduplicate, rerank with cross-encoder
+5. Generate answer; return `graph_path` for 3D highlight
 
-### 2. Local Mode (`local`)
-This is an entity-centric GraphRAG mode, designed to fetch rich local neighborhoods of knowledge.
-*   **Retrieval loop**: Extracts core entities from the prompt, queries Neo4j to pull their immediate nodes, attributes, and connected relationship triplets (e.g. `(Customer)-[:OWNS]->(Policy)`).
-*   **Pros**: Highly precise for specific entity inquiries, lists properties and concrete facts with absolute citation grounding.
-*   **Cons**: Struggles with broad, document-wide summaries.
+### hybrid
 
-### 3. Global Mode (`global`)
-This is a community-centric GraphRAG mode designed for high-level summarizing questions (e.g., *"What are the primary structural differences between these policy templates?"*).
-*   **Retrieval loop**: During graph indexing, Neo4j clusters nodes into hierarchical semantic communities using graph community algorithms (such as Leiden/Louvain). It generates pre-summarized LLM descriptions for each community. The global query scans these high-level community summaries instead of individual raw text chunks.
-*   **Pros**: Captures broad, holistic themes across thousands of documents.
-*   **Cons**: High token consumption, lacks sub-pixel paragraph details.
+Combines **local** entity retrieval and **global** community retrieval in a round-robin merge. Uses both keyword types simultaneously.
 
-### 4. Mix Mode (`mix`) — Default
-This is the flagship hybrid retrieval mode implemented by default in InsightNote, combining the best of flat vectors and entity graphs.
-*   **Retrieval loop**:
-    1.  Queries Qdrant for semantic similarity dense vector chunks.
-    2.  Queries Neo4j to extract neighboring entity-relationship triplets.
-    3.  Merges both contexts, removes duplicates, and passes them to a **Cross-Encoder Reranker** (`BAAI/bge-reranker-v2-m3`).
-    4.  Feeds the highest-scoring hybrid context into the LLM.
-*   **Pros**: Maximizes context density, performs complex multi-hop reasoning, and animates pulsing light particles along the traversed reasoning path in the 3D graph!
-*   **Cons**: Requires both vector and graph databases to be fully synchronized.
+### naive
+
+Pure vector search — no graph traversal. Automatically useful when Neo4j is unavailable.
 
 ---
 
-## 📊 3. Query Mode Benchmarks (300 Private QA Dataset)
+## Streaming response
 
-To validate the accuracy, answer quality, and generation latency of the different RAG modes, the system was benchmarked over a **Private Test Dataset of 300 curated QA pairs**.
+When `stream: true`:
 
-Below is the benchmark metrics comparison showing retrieval completeness, accuracy indices, and average processing speeds across Naive, Local, Global, and Mix Modes:
+```
+data: {"type":"metadata","citations":[...],"retrieval_steps":[...],"graph_path":{...}}
+data: {"type":"token","content":"Yes,"}
+data: {"type":"token","content":" the"}
+...
+data: {"type":"done"}
+```
 
-![Query Mode Benchmark](images/QueryModeBenchmark.png)
+Frontend (`api.ts`) parses SSE lines and updates the chat bubble incrementally.
 
-### Key Evaluation Discoveries:
-1.  **Mix Mode (`mix`)** achieves the highest overall accuracy and citation completeness by combining the topological connections of Neo4j with the dense semantic vector search of Qdrant. It is the optimal setting for corporate operations.
-2.  **Naive Mode (`naive`)** maintains the fastest response times (lowest latency) but exhibits higher hallucination rates on multi-hop questions because of its complete lack of relational graph traversal.
-3.  **Local Mode (`local`)** excels at fact-lookup queries involving isolated entities and exact property extractions.
-4.  **Global Mode (`global`)** is the absolute leader for thematic summarizing questions, scanning community summaries to formulate complete high-level thematic abstracts.
+---
+
+## Graph path in responses
+
+```json
+{
+  "graph_path": {
+    "node_ids": ["entity_a", "entity_b"],
+    "link_ids": ["rel_1"],
+    "mode": "query"
+  }
+}
+```
+
+Passed to `KnowledgeGraphPanel` for cyan highlight animation. See [../../docs/GRAPH_VISUALIZATION.md](../../docs/GRAPH_VISUALIZATION.md).
+
+---
+
+## Low-level query API
+
+Additional endpoints in `query_routes.py` (used internally / for advanced clients):
+
+```
+POST /query
+POST /query/stream
+```
+
+These accept `QueryParam` with the same mode enum. Protected by `ZERAG_API_KEY` when configured.
+
+---
+
+## Related docs
+
+- [RAG_ARCHITECTURE.md](RAG_ARCHITECTURE.md) — dual retrieval overview
+- [../../docs/GROUNDED_CITATIONS.md](../../docs/GROUNDED_CITATIONS.md) — citation grounding rules
+- [../../frontend/docs/API_CONTRACT.md](../../frontend/docs/API_CONTRACT.md) — full REST contract

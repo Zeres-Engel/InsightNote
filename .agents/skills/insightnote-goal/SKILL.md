@@ -1,96 +1,158 @@
 ---
 name: insightnote-goal
-description: Continuous overnight run strategy, acceptance tests, fallbacks, and validation guides to achieve the final multi-notebook GraphRAG NotebookLM-style workspace goal.
+description: Product goal, acceptance criteria, API contract, and validation workflow for the multi-notebook GraphRAG workspace.
 ---
 
-# InsightNote Overnight Goal & E2E Validation
+# InsightNote Product Goal & Validation
 
-Use this skill when running continuous development, testing, and deployment loops to achieve the final NotebookLM-style GraphRAG workspace product.
+Use when validating features, running E2E checks, or guiding development toward the NotebookLM-style GraphRAG workspace.
 
----
-
-## 🎯 Product Goal & Architecture
-
-The goal is a fully functional multi-notebook GraphRAG knowledge workspace consisting of a 3-column layout:
-1.  **Left Column (Sources)**: Manage, ingest, and upload URLs, rich notes, and PDFs (such as `example/Resume.pdf`). Show progressive pipeline tracking phases:
-    *   `load_file`
-    *   `mineru_parse` (layout OCR parsing)
-    *   `chunking`
-    *   `entity_extraction`
-    *   `relationship_extraction`
-    *   `neo4j_write`
-    *   `vector_index`
-2.  **Middle Column (Copilot Q&A)**: Interactive chat over the active notebook. Must return precise, grounded answers with:
-    *   Citations pointing to exact source document pages and text chunks.
-    *   Collapsible retrieval steps showing what keywords were extracted and what paths were traversed.
-    *   Graph reasoning path highlights (nodes & link IDs).
-3.  **Right Column (WebGL 3D Graph)**: Physics-directed 3D network visualizer (`react-force-graph-3d`) that emphasizes traversed reasoning paths in orange-gold, dims unselected nodes, and opens properties in a sliding drawer on click.
+**Configuration:** [docs/SETUP.md](../../docs/SETUP.md)
 
 ---
 
-## 🔌 API & Integration Contract
+## Product goal
 
-Ensure the backend exposes and the frontend consumes the following notebook-isolated endpoints under `/api/...`:
+A multi-notebook GraphRAG workspace with three columns:
 
-*   `GET /api/notebooks` — List notebooks
-*   `POST /api/notebooks` — Create notebook
-*   `GET /api/notebooks/{notebook_id}` — Get notebook details
-*   `POST /api/notebooks/{notebook_id}/sources/load-example` — Load `example/Resume.pdf` into notebook
-*   `POST /api/notebooks/{notebook_id}/sources/upload` — Upload PDF/text files
-*   `GET /api/pipeline/jobs/{job_id}` — Poll progressive pipeline phases
-*   `GET /api/notebooks/{notebook_id}/sources` — List ingested sources
-*   `GET /api/notebooks/{notebook_id}/graph` — Get Neo4j active graph nodes and relationships
-*   `GET /api/notebooks/{notebook_id}/graph/node/{node_id}` — Get deep properties and citations for a node
-*   `POST /api/notebooks/{notebook_id}/chat` — Chat query with citation list and highlighted reasoning paths
+### 1. Sources (left)
+
+- Ingest URLs, text notes, PDFs (drag-and-drop)
+- Show pipeline progress with user-friendly stage labels
+- Delete sources via trash button
+- Switch between isolated notebooks
+
+**Pipeline steps (actual API names):**
+
+| Source | Steps |
+|---|---|
+| PDF / file | `load_file` → `document_understanding` → `vector_graph_sync` |
+| URL / note | `load_file` → `chunking` → `entity_extraction` → `vector_graph_sync` |
+
+### 2. Chat (middle)
+
+- Streaming markdown answers with inline cursor during generation
+- Grounded citation cards (only explicitly cited sources)
+- Collapsible retrieval steps (sanitized, no internal IDs)
+- Chat history persisted in PostgreSQL (+ localStorage offline cache)
+- 3-dot bouncing pending indicator (no skeleton paragraphs)
+
+### 3. Graph (right)
+
+- Interactive 3D force-directed graph (`react-force-graph-3d`)
+- **Cyan** highlight for query reasoning paths
+- **Emerald** highlight for newly ingested nodes (one-shot on `ready`)
+- Dim non-path nodes during active highlight
+- Properties drawer on node click
+- Reset View clears all highlights
+- `fgRef.current.refresh()` on highlight state change
 
 ---
 
-## 🛠 Testing & Validation Workflow
+## API contract (notebook-scoped)
 
-Continuously run these validation scripts to ensure zero regression:
+All under `/api/` — full schemas in [frontend/docs/API_CONTRACT.md](../../frontend/docs/API_CONTRACT.md)
 
-### 1. Verification of Backend Compilation & Tests
-Always run these within the GPU-supported conda environment (`gpu_env`):
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/notebooks` | List notebooks |
+| `POST /api/notebooks` | Create notebook |
+| `GET /api/notebooks/{id}` | Get notebook |
+| `DELETE /api/notebooks/{id}` | Delete notebook + cascade DB cleanup |
+| `GET /api/notebooks/{id}/sources` | List sources |
+| `POST /api/notebooks/{id}/sources/upload` | Upload file |
+| `POST /api/notebooks/{id}/sources/url/stream` | Ingest URL |
+| `POST /api/notebooks/{id}/sources/note/stream` | Ingest note |
+| `POST /api/notebooks/{id}/sources/load-example` | Load example PDF (`path` field) |
+| `DELETE /api/notebooks/{id}/sources/{source_id}` | Delete source |
+| `GET /api/pipeline/jobs/{job_id}` | Poll pipeline |
+| `GET /api/notebooks/{id}/graph` | Full graph |
+| `GET /api/notebooks/{id}/graph/node/{node_id}` | Node details |
+| `GET /api/notebooks/{id}/graph/node/{node_id}/neighbors` | Expand neighbors |
+| `GET /api/notebooks/{id}/chat/history` | Load chat history |
+| `POST /api/notebooks/{id}/chat` | Chat (`stream: true` for SSE) |
+
+---
+
+## Validation workflow
+
+Always use **`gpu_env`** for backend tests.
+
+### 1. Backend unit tests
+
 ```bash
-# Verify unit tests are green
-pytest backend/tests/unit/test_insightnote_routes.py -v
+conda activate gpu_env
+cd backend
+pytest tests/unit/test_insightnote_routes.py -v
 ```
 
-### 2. Launching Services
-*   **Database Stack**:
-    ```bash
-    docker compose up -d mongodb neo4j qdrant mongo-express
-    ```
-*   **FastAPI Backend**: Run locally in `gpu_env`:
-    ```bash
-    cd backend
-    python server.py
-    ```
-*   **Next.js Frontend**: Run via Docker:
-    ```bash
-    docker compose build frontend
-    docker compose up -d frontend
-    ```
+### 2. Full test suite
 
-### 3. E2E Pipeline Verification
-Before pushing changes or submitting a PR, always execute the full pipeline storage verification:
 ```bash
-C:/Users/nguye/anaconda3/envs/gpu_env/python.exe scripts/verify_backend_pipeline.py
+conda activate gpu_env
+cd backend
+pytest tests/ -v
 ```
 
+Or: `task test:all`
+
+### 3. Frontend build
+
+```bash
+cd frontend && npm run build
+```
+
+### 4. Launch services
+
+```bash
+# Databases
+docker compose up -d postgres mongodb neo4j qdrant
+
+# Backend (local)
+conda activate gpu_env && cd backend && python server.py
+
+# Frontend (Vite — not Next.js)
+cd frontend && npm run dev
+```
+
+Or use `scripts/run-dev.bat` on Windows.
+
+### 5. Manual smoke test
+
+1. Open http://localhost:3000
+2. Create or select a notebook
+3. Upload a PDF → watch pipeline progress → source reaches `ready`
+4. Ask a question → verify citations, retrieval steps, cyan graph path
+5. Click Reset View → highlights clear
+6. Stop backend → frontend falls back to sandbox without red error screen
+
 ---
 
-## 🌿 Git Flow Branching & Tagging Policy
+## Sandbox fallback policy
 
-*   All active work, feature upgrades, and debugging must occur strictly on the `develop` branch.
-*   The `release` branch is reserved for pre-release validation and staging.
-*   Stable compiled production code resides on `main`.
-*   Creating/tagging releases (such as `1.0.0` tags) must **only** be performed when explicitly requested by the Master Architect (User).
+If MongoDB, Neo4j, Qdrant, or PostgreSQL is offline:
+
+- Backend logs warnings, continues in degraded mode
+- Frontend `api.ts` catches fetch errors → `mock-data.ts`
+- **Never** show red error screens or raw database IDs
 
 ---
 
-## 🛡 High-Fidelity Fallback Policy (Sandbox Mode)
+## Git flow
 
-If any backend database (MongoDB, Neo4j, Qdrant) is offline or fails to connect, **never throw error screens**.
-*   The backend router `insightnote_routes.py` must catch connection failures, log warnings, and fall back to in-memory mocks for the requested notebook (`MOCK_NODES_RESUME`, `PRESET_QA_RESUME` or `MOCK_NODES_INSURANCE`, `PRESET_QA_INSURANCE`).
-*   The frontend broker `api.ts` must catch fetch failures and transition transparently into local mock storage (defined in `mock-data.ts`) to guarantee a bulletproof, crash-free presentation.
+| Branch | Purpose |
+|---|---|
+| `develop` | Active development |
+| `release` | Staging |
+| `main` | Production |
+
+Never create git tags without explicit user request.
+
+---
+
+## Known gaps
+
+| Item | Status |
+|---|---|
+| `example/Resume.pdf` | Not bundled — place at `backend/example/Resume.pdf` or upload manually |
+| `scripts/verify_backend_pipeline.py` | Not in repo — use `pytest tests/ -v` instead |

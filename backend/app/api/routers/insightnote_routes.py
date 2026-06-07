@@ -1833,7 +1833,7 @@ def create_insightnote_routes(
         background_tasks: BackgroundTasks,
     ):
         """
-        Specialized loading endpoint for 'example/Resume.pdf'.
+        Specialized loading endpoint for 'example/paper.pdf'.
         Registers source and triggers progressive indexing.
         """
         await ensure_notebook_exists(notebook_id)
@@ -1847,10 +1847,10 @@ def create_insightnote_routes(
         from pathlib import Path
 
         possible_paths = [
-            Path("example/Resume.pdf"),
-            Path("../example/Resume.pdf"),
-            Path(__file__).resolve().parents[3] / "example" / "Resume.pdf",
-            Path(__file__).resolve().parents[2] / "example" / "Resume.pdf",
+            Path("example/paper.pdf"),
+            Path("../example/paper.pdf"),
+            Path(__file__).resolve().parents[3] / "example" / "paper.pdf",
+            Path(__file__).resolve().parents[2] / "example" / "paper.pdf",
         ]
         resolved_src = None
         for p in possible_paths:
@@ -1866,7 +1866,7 @@ def create_insightnote_routes(
                 f"Copied {resolved_src} to input directory: {notebook_input_dir / filename}"
             )
         else:
-            logger.warning("Could not find example/Resume.pdf in standard paths!")
+            logger.warning("Could not find example/paper.pdf in standard paths!")
 
         # Register progressive job in database
         await chat_history_db.create_job(

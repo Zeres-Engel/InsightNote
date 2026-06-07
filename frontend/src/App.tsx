@@ -101,8 +101,12 @@ export default function App() {
         api.getGraph(notebookId),
       ]);
       const previousGraph = graphDataRef.current;
-      const previousNodeIds = new Set(previousGraph.nodes.map((node) => node.id));
-      const previousLinkIds = new Set(previousGraph.links.map((link) => link.id));
+      const previousNodeIds = new Set(
+        previousGraph.nodes.map((node) => node.id),
+      );
+      const previousLinkIds = new Set(
+        previousGraph.links.map((link) => link.id),
+      );
       const newNodeIds = updatedGraph.nodes
         .filter((node) => !previousNodeIds.has(node.id))
         .slice(0, 35)
@@ -358,7 +362,11 @@ export default function App() {
             ),
           );
           if (newNodeIds.length > 0 || newLinkIds.length > 0) {
-            setHighlightPath({ node_ids: newNodeIds, link_ids: newLinkIds, mode: "ingest" });
+            setHighlightPath({
+              node_ids: newNodeIds,
+              link_ids: newLinkIds,
+              mode: "ingest",
+            });
           }
         }
       } catch (e) {
@@ -566,8 +574,7 @@ export default function App() {
         dedupeSources([
           finalSource,
           ...prev.filter(
-            (src) =>
-              src.id !== tempSourceId && src.id !== response.source_id,
+            (src) => src.id !== tempSourceId && src.id !== response.source_id,
           ),
         ]),
       );
@@ -594,7 +601,11 @@ export default function App() {
       setSources(dedupeSources(updatedSources));
       setGraphData(updatedGraph);
       if (newNodeIds.length > 0 || newLinkIds.length > 0) {
-        setHighlightPath({ node_ids: newNodeIds, link_ids: newLinkIds, mode: "ingest" });
+        setHighlightPath({
+          node_ids: newNodeIds,
+          link_ids: newLinkIds,
+          mode: "ingest",
+        });
       }
       setPipelineJobs((prev) => {
         const next = { ...prev };
@@ -682,8 +693,7 @@ export default function App() {
         dedupeSources([
           finalSource,
           ...prev.filter(
-            (src) =>
-              src.id !== tempSourceId && src.id !== response.source_id,
+            (src) => src.id !== tempSourceId && src.id !== response.source_id,
           ),
         ]),
       );
@@ -710,7 +720,11 @@ export default function App() {
       setSources(dedupeSources(updatedSources));
       setGraphData(updatedGraph);
       if (newNodeIds.length > 0 || newLinkIds.length > 0) {
-        setHighlightPath({ node_ids: newNodeIds, link_ids: newLinkIds, mode: "ingest" });
+        setHighlightPath({
+          node_ids: newNodeIds,
+          link_ids: newLinkIds,
+          mode: "ingest",
+        });
       }
       setPipelineJobs((prev) => {
         const next = { ...prev };
@@ -733,7 +747,7 @@ export default function App() {
     try {
       const response = await api.loadExample(
         activeNotebook.id,
-        "example/Resume.pdf",
+        "example/paper.pdf",
       );
       const pendingSource: SourceListItem = {
         id: response.source_id,
@@ -798,8 +812,7 @@ export default function App() {
             status: response.status,
           },
           ...prev.filter(
-            (src) =>
-              src.id !== tempSourceId && src.id !== response.source_id,
+            (src) => src.id !== tempSourceId && src.id !== response.source_id,
           ),
         ]),
       );
