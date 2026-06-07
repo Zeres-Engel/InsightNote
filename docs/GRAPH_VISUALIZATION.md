@@ -2,7 +2,7 @@
 
 Technical reference for the right-column knowledge graph panel (`frontend/src/components/graph/KnowledgeGraphPanel.tsx`).
 
-![3D Knowledge Graph Panel](images/workspace_viewport.png)
+![3D Knowledge Graph Panel](images/workspace_main_view.png)
 
 ---
 

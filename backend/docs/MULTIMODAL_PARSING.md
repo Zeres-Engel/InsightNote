@@ -78,7 +78,7 @@ These coordinates flow into Neo4j chunk nodes and enable PDF highlight overlays 
 | Text note | `POST /api/notebooks/{id}/sources/note/stream` |
 | Example PDF | `POST /api/notebooks/{id}/sources/load-example` |
 
-> **Note:** `load-example` expects `example/Resume.pdf` on disk. This file is not bundled in the repo — place it at `backend/example/Resume.pdf` or upload your own PDF instead.
+> **Note:** `load-example` expects `example/paper.pdf` on disk. This file is not bundled in the repo — place it at `backend/example/paper.pdf` or upload your own PDF instead.
 
 ---
 

@@ -2,7 +2,7 @@
 
 Core architecture of the InsightNote multi-notebook GraphRAG engine (ZeRAG + MultiRAG).
 
-![Workspace Viewport](../../docs/images/workspace_viewport.png)
+![Workspace Viewport](../../docs/images/workspace_main_view.png)
 
 ---
 
