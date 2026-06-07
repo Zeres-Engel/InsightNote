@@ -125,6 +125,8 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[str] = None
     stream: Optional[bool] = False
     rerank: Optional[bool] = True
+    top_k: Optional[int] = None
+    chunk_top_k: Optional[int] = None
 
 
 class DefaultQueryRequest(BaseModel):
@@ -3082,6 +3084,10 @@ def create_insightnote_routes(
                     conversation_history=postgres_history,
                     enable_rerank=request.rerank,
                 )
+                if request.top_k is not None:
+                    param.top_k = request.top_k
+                if request.chunk_top_k is not None:
+                    param.chunk_top_k = request.chunk_top_k
                 if request.stream:
                     param.stream = True
                 result = await notebook_rag.aquery_llm(prompt_message, param=param)

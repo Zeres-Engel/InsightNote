@@ -70,6 +70,11 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
 
+  const [queryMode, setQueryMode] = useState<string>("mix");
+  const [topK, setTopK] = useState<number>(60);
+  const [chunkTopK, setChunkTopK] = useState<number>(20);
+  const [enableRerank, setEnableRerank] = useState<boolean>(true);
+
   const [graphData, setGraphData] = useState<GraphResponse>({
     nodes: [],
     links: [],
@@ -846,7 +851,7 @@ export default function App() {
   };
 
   // Handler: Send Chat message and capture reasoning path
-  const handleSendMessage = async (text: string, rerank: boolean = true) => {
+  const handleSendMessage = async (text: string) => {
     if (!activeNotebook) return;
     // Clear previous graph highlight path when initiating a new message
     setHighlightPath({ node_ids: [], link_ids: [] });
@@ -922,18 +927,19 @@ export default function App() {
                 : m,
             ),
           );
-          // Highlight path in 3D Graph (if path exists, otherwise clear)
+          // Highlight path in 3D Graph (if path exists)
           if (
             meta.graph_path &&
             meta.graph_path.node_ids &&
             meta.graph_path.node_ids.length > 0
           ) {
-            setHighlightPath({ ...meta.graph_path, mode: "query" });
-          } else {
-            setHighlightPath({ node_ids: [], link_ids: [] });
+            setHighlightPath(meta.graph_path);
           }
         },
-        rerank,
+        enableRerank,
+        queryMode,
+        topK,
+        chunkTopK,
       );
 
       // Finally, set the final complete object just to be fully consistent
@@ -1353,6 +1359,14 @@ export default function App() {
             showSources={showSources}
             onToggleSources={() => setShowSources(!showSources)}
             hasSources={sources.length > 0}
+            queryMode={queryMode}
+            setQueryMode={setQueryMode}
+            topK={topK}
+            setTopK={setTopK}
+            chunkTopK={chunkTopK}
+            setChunkTopK={setChunkTopK}
+            enableRerank={enableRerank}
+            setEnableRerank={setEnableRerank}
           />
         </div>
 

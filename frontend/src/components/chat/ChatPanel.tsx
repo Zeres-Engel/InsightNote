@@ -13,17 +13,27 @@ import {
   HelpCircle,
   PanelLeftClose,
   PanelLeftOpen,
+  Settings,
 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { ChatMessage } from "../../lib/types";
 
 interface ChatPanelProps {
   messages: ChatMessage[];
   isLoading: boolean;
-  onSendMessage: (text: string, rerank: boolean) => void;
+  onSendMessage: (text: string) => void;
   isResume: boolean;
   showSources?: boolean;
   onToggleSources?: () => void;
   hasSources: boolean;
+  queryMode: string;
+  setQueryMode: (mode: string) => void;
+  topK: number;
+  setTopK: (k: number) => void;
+  chunkTopK: number;
+  setChunkTopK: (k: number) => void;
+  enableRerank: boolean;
+  setEnableRerank: (r: boolean) => void;
 }
 
 const PRESET_BADGES_DOCUMENT = [
@@ -50,8 +60,17 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   showSources,
   onToggleSources,
   hasSources,
+  queryMode,
+  setQueryMode,
+  topK,
+  setTopK,
+  chunkTopK,
+  setChunkTopK,
+  enableRerank,
+  setEnableRerank,
 }) => {
   const [input, setInput] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const latestAssistantSuggestions =
     [...messages]
@@ -69,18 +88,16 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         ? PRESET_BADGES_RESUME
         : PRESET_BADGES_DOCUMENT;
 
-  const [rerankEnabled, setRerankEnabled] = useState(true);
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
-    onSendMessage(input.trim(), rerankEnabled);
+    onSendMessage(input.trim());
     setInput("");
   };
 
   const handleBadgeClick = (question: string) => {
     if (isLoading) return;
-    onSendMessage(question, rerankEnabled);
+    onSendMessage(question);
   };
 
   // Scroll to bottom on new messages
@@ -111,11 +128,130 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             AI Copilot & Reasoning
           </h2>
         </div>
-        <div className="text-xs text-slate-500 font-medium flex items-center gap-1.5">
-          <BrainCircuit className="w-3.5 h-3.5 text-indigo-400" />
-          Powered by ZeRAG
+        <div className="flex items-center gap-3">
+          <div className="text-xs text-slate-500 font-medium hidden sm:flex items-center gap-1.5">
+            <BrainCircuit className="w-3.5 h-3.5 text-indigo-400" />
+            Powered by ZeRAG
+          </div>
+          <button
+            onClick={() => setShowSettings(!showSettings)}
+            title="Query Engine Settings"
+            className={`p-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition duration-150 cursor-pointer ${showSettings ? "text-indigo-400 bg-slate-900/50" : ""}`}
+          >
+            <Settings className="w-4 h-4 animate-spin-slow" />
+          </button>
         </div>
       </div>
+
+      {/* Dynamic Slide-Down Settings Panel */}
+      <AnimatePresence>
+        {showSettings && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden border-b border-slate-900 bg-slate-950/60 backdrop-blur-md"
+          >
+            <div className="p-4 space-y-4 text-xs">
+              <div className="flex items-center justify-between border-b border-slate-900/40 pb-2">
+                <span className="font-bold text-slate-200 uppercase tracking-wider text-[10px] flex items-center gap-1.5">
+                  <Settings className="w-3.5 h-3.5 text-indigo-400 animate-spin-slow" />
+                  RAG Query Engine Settings
+                </span>
+                <span className="text-[10px] bg-indigo-950 text-indigo-400 px-2 py-0.5 rounded font-bold border border-indigo-900/40">
+                  ZeRAG v1.1.0 Active
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Query Mode Dropdown */}
+                <div className="space-y-1.5">
+                  <label className="font-bold text-slate-450 block uppercase tracking-wide text-[9px]">
+                    Retrieval Mode
+                  </label>
+                  <select
+                    value={queryMode}
+                    onChange={(e) => setQueryMode(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 focus:border-indigo-500 rounded-lg px-2.5 py-2 outline-none text-slate-200 cursor-pointer transition text-xs"
+                  >
+                    <option value="mix">Mix (Unified Vector + Graph)</option>
+                    <option value="hybrid">
+                      Hybrid (Multi-Hop Relational)
+                    </option>
+                    <option value="local">Local (Deep Entity Focus)</option>
+                    <option value="global">
+                      Global (Thematic Communities)
+                    </option>
+                    <option value="naive">Naive (Pure Qdrant Vector)</option>
+                  </select>
+                </div>
+
+                {/* Enable Reranking Toggle */}
+                <div className="space-y-1.5 flex flex-col justify-end">
+                  <label className="font-bold text-slate-450 block uppercase tracking-wide text-[9px] mb-1">
+                    Reranking Filtration
+                  </label>
+                  <label className="flex items-center gap-2.5 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 cursor-pointer select-none text-slate-350 hover:text-slate-100 hover:border-slate-700/50 transition">
+                    <input
+                      type="checkbox"
+                      checked={enableRerank}
+                      onChange={(e) => setEnableRerank(e.target.checked)}
+                      className="w-3.5 h-3.5 rounded border-slate-800 text-indigo-600 focus:ring-indigo-500/30 bg-slate-950 cursor-pointer"
+                    />
+                    <span className="font-semibold">
+                      Enable BGE-Reranker-M3
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Slider for Top K */}
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-center">
+                    <label className="font-bold text-slate-450 uppercase tracking-wide text-[9px]">
+                      Retrieve Entities Limit (Top K)
+                    </label>
+                    <span className="text-[10px] font-bold text-indigo-400">
+                      {topK} items
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={10}
+                    max={150}
+                    step={5}
+                    value={topK}
+                    onChange={(e) => setTopK(parseInt(e.target.value))}
+                    className="w-full accent-indigo-500 cursor-pointer bg-slate-900 h-1 rounded-lg outline-none"
+                  />
+                </div>
+
+                {/* Slider for Chunk Top K */}
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-center">
+                    <label className="font-bold text-slate-450 uppercase tracking-wide text-[9px]">
+                      LLM Chunk Budget (Chunk Top K)
+                    </label>
+                    <span className="text-[10px] font-bold text-indigo-400">
+                      {chunkTopK} chunks
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={5}
+                    max={50}
+                    step={1}
+                    value={chunkTopK}
+                    onChange={(e) => setChunkTopK(parseInt(e.target.value))}
+                    className="w-full accent-indigo-500 cursor-pointer bg-slate-900 h-1 rounded-lg outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Messages Scroll Area */}
       <div className="flex-1 overflow-y-auto px-4 py-6 space-y-6">
@@ -180,19 +316,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             </div>
           </div>
         )}
-
-        {/* Toggle Controls */}
-        <div className="flex items-center gap-2 mb-2.5 justify-end px-1">
-          <label className="flex items-center gap-2 text-[10px] font-semibold text-slate-400 hover:text-slate-200 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={rerankEnabled}
-              onChange={(e) => setRerankEnabled(e.target.checked)}
-              className="w-3.5 h-3.5 rounded border-slate-800 text-indigo-600 focus:ring-indigo-500/30 bg-slate-900 cursor-pointer"
-            />
-            <span>Enable Reranking (Cross-Encoder)</span>
-          </label>
-        </div>
 
         {/* Input Form */}
         <form onSubmit={handleSubmit} className="flex gap-2 relative">

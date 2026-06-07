@@ -885,6 +885,9 @@ export async function askChat(
   onChunk?: (chunk: string) => void,
   onMetadata?: (metadata: any) => void,
   rerank: boolean = true,
+  mode: string = "mix",
+  topK?: number,
+  chunkTopK?: number,
 ): Promise<ChatResponse> {
   try {
     const res = await fetch(`${BASE_URL}/notebooks/${notebookId}/chat`, {
@@ -895,6 +898,9 @@ export async function askChat(
         conversation_history: chatHistory,
         stream: !!onChunk,
         rerank: rerank,
+        mode: mode,
+        top_k: topK,
+        chunk_top_k: chunkTopK,
       }),
     });
     if (res.ok) {
