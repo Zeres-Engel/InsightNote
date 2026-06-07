@@ -81,6 +81,7 @@ Open **http://localhost:3000**
 | **[docs/DEMO_DATA.md](docs/DEMO_DATA.md)** | Sandbox mode, mock data, example PDF |
 | **[backend/docs/RAG_ARCHITECTURE.md](backend/docs/RAG_ARCHITECTURE.md)** | Multi-workspace RAG engine |
 | **[backend/docs/QUERY.md](backend/docs/QUERY.md)** | Query modes & chat history |
+| **[backend/docs/BENCHMARKING.md](backend/docs/BENCHMARKING.md)** | GraphRAG hybrid query performance benchmarking |
 | **[backend/docs/MULTIMODAL_PARSING.md](backend/docs/MULTIMODAL_PARSING.md)** | MinerU parsing pipeline |
 | **[backend/docs/CHUNKING.md](backend/docs/CHUNKING.md)** | Bbox chunking & Neo4j tree |
 
