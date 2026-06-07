@@ -50,3 +50,6 @@ Thumbs.db
 *.njsproj
 *.sln
 *.swp
+
+# Playwright MCP browser temporary files
+.playwright-mcp/
