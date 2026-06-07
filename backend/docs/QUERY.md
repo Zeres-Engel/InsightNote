@@ -42,33 +42,48 @@ PostgreSQL persists conversation turns (when DB online)
 
 ## Query modes
 
-Six modes are supported in the engine (`backend/app/core/base.py`):
+Six modes are supported in the engine (`backend/app/core/base.py`, `_perform_kg_search()` in `operate.py`):
 
-| Mode | Engines used | Best for |
+| Mode | Retrieval path | Engines |
 |---|---|---|
-| **`mix`** (default) | Qdrant + Neo4j + reranker | General Q&A, multi-hop reasoning |
-| **`hybrid`** | Local + global keyword paths | Deep cross-reference across entity levels |
-| **`local`** | Neo4j entity neighborhoods | Specific facts, relationship lookups |
-| **`global`** | Neo4j community summaries | Broad thematic questions |
-| **`naive`** | Qdrant only | Fast semantic search; fallback when graph is offline |
-| **`bypass`** | None (direct LLM) | Internal/debug — skips retrieval |
+| **`naive`** | Vector chunks only | Qdrant dense search — no graph keyword branches |
+| **`local`** | **Entity focus** | Low-level keywords → Neo4j nodes + entities VDB |
+| **`global`** | **Relationship focus** | High-level keywords → Neo4j edges + relationships VDB |
+| **`hybrid`** | Entity + relationship | Both node and edge retrieval — no extra vector pass |
+| **`mix`** (default) | Entity + relationship + vector | Hybrid **plus** Qdrant chunk similarity (`_get_vector_context`) |
+| **`bypass`** | None | Direct LLM — skips retrieval (debug) |
 
-### mix (default)
+### Cost & latency ordering
 
-1. Extract low-level and high-level keywords via LLM.
-2. Qdrant dense vector search on low-level keywords.
-3. Neo4j traversal on high-level keywords.
-4. Merge contexts, deduplicate, and **rerank with the BAAI/bge-reranker-v2-m3 cross-encoder**.
-5. Filter out low-scoring chunks (based on configured `rerank_score` threshold).
-6. Generate answer; return `graph_path` for 3D WebGL highlight.
+```txt
+naive  <  local ≈ global  <  hybrid  <  mix
+```
 
-### hybrid
-
-Combines **local** entity retrieval and **global** community retrieval in a round-robin merge. Uses both keyword types simultaneously.
+`mix` is the slowest mode because it executes the most retrieval branches before reranking. See [BENCHMARKING.md](BENCHMARKING.md) for measured latencies and Locust pipeline.
 
 ### naive
 
-Pure vector search — no graph traversal. Automatically useful when Neo4j is unavailable.
+Pure vector search via `naive_query()` — no entity/relationship graph traversal. Fastest mode; lower recall on multi-hop questions.
+
+### local (entity focus)
+
+Extracts low-level keywords, retrieves entity neighborhoods from Neo4j and the entities vector store.
+
+### global (relationship focus)
+
+Extracts high-level keywords, retrieves relationship triplets from Neo4j and the relationships vector store.
+
+### hybrid
+
+Runs **both** local (entity) and global (relationship) branches and round-robin merges results. No additional vector chunk pass.
+
+### mix (default)
+
+1. Extract low-level and high-level keywords via LLM
+2. Entity retrieval (`local` branch) + relationship retrieval (`global` branch)
+3. **Additional** dense vector chunk search on Qdrant
+4. Merge, deduplicate, rerank with BGE cross-encoder
+5. Generate answer; return `graph_path` for 3D highlight
 
 ---
 
@@ -120,5 +135,6 @@ These accept `QueryParam` with the same mode enum. Protected by `ZERAG_API_KEY` 
 ## Related docs
 
 - [RAG_ARCHITECTURE.md](RAG_ARCHITECTURE.md) — dual retrieval overview
+- [BENCHMARKING.md](BENCHMARKING.md) — latency benchmarks & Locust pipeline
 - [../../docs/GROUNDED_CITATIONS.md](../../docs/GROUNDED_CITATIONS.md) — citation grounding rules
 - [../../frontend/docs/API_CONTRACT.md](../../frontend/docs/API_CONTRACT.md) — full REST contract

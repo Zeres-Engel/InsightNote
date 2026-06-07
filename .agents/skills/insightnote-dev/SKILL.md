@@ -93,7 +93,15 @@ See [docs/GRAPH_VISUALIZATION.md](../../docs/GRAPH_VISUALIZATION.md)
 
 Default: `mix`. Also supported: `hybrid`, `local`, `global`, `naive`, `bypass`.
 
-See [backend/docs/QUERY.md](../../backend/docs/QUERY.md)
+| Mode | Retrieval |
+|---|---|
+| `naive` | Vector only |
+| `local` | Entity (Neo4j nodes) |
+| `global` | Relationship (Neo4j edges) |
+| `hybrid` | Entity + relationship |
+| `mix` | Entity + relationship + vector (slowest) |
+
+Latency order: `naive < local ≈ global < hybrid < mix`. See [backend/docs/BENCHMARKING.md](../../backend/docs/BENCHMARKING.md).
 
 ---
 
