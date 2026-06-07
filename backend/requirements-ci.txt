@@ -1,3 +1,5 @@
+# Lightweight deps for CI syntax/compile checks (no MinerU / torch / Playwright stack).
+# Full runtime stack: requirements.txt
 fastapi
 uvicorn
 pydantic
@@ -10,15 +12,10 @@ networkx
 tenacity
 aiohttp
 beautifulsoup4
-# crawl4ai>=0.7 uses pillow>=10.4 (compatible with mineru pillow>=11)
-crawl4ai>=0.7.0,<0.9.0
 openai
-sentence-transformers
-# Storage requirements
 pymongo
 neo4j
 qdrant-client
-# Parser and other requirements
 reportlab
 pandas
 requests
@@ -26,9 +23,7 @@ tqdm
 tabulate
 PyYAML>=6.0.0
 json-repair
-# Shared image stack — mineru[core] requires pillow>=11
 pillow>=11.0.0,<12.0.0
-mineru[core]>=3.2.3,<3.3.0
 PyJWT
 python-multipart
 python-docx

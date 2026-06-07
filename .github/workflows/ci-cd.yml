@@ -5,10 +5,12 @@ on:
     branches:
       - main
       - master
+      - develop
   pull_request:
     branches:
       - main
       - master
+      - develop
 
 jobs:
   # 1. Frontend Check Job (Lint & Compilation)
@@ -41,7 +43,7 @@ jobs:
       - name: Run TypeScript Compiler Check & Build
         run: npm run build
 
-  # 2. Backend Check Job (Python Lint & Compilation)
+  # 2. Backend Check Job (Python compile + full requirements lock validation)
   backend-check:
     name: Backend Compilation Check
     runs-on: ubuntu-latest
@@ -58,13 +60,21 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
-          cache-dependency-path: ./backend/requirements.txt
+          cache-dependency-path: |
+            ./backend/requirements-ci.txt
+            ./backend/requirements.txt
 
-      - name: Install Backend Dependencies
-        run: pip install -r requirements.txt
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install CI Dependencies (fast compile check)
+        run: pip install -r requirements-ci.txt
 
       - name: Validate Syntax Compilation
         run: python -m compileall app/ server.py config.py
+
+      - name: Validate Full Runtime Requirements Resolve
+        run: pip install -r requirements.txt
 
   # 3. Docker Dry-Run Job (Verify Dockerfiles can compile successfully)
   docker-build-test:
@@ -84,7 +94,7 @@ jobs:
         with:
           context: ./backend
           file: ./backend/Dockerfile
-          push: false # Dry-run only, don't push to registry during test
+          push: false
           tags: insightnote-backend:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -94,7 +104,7 @@ jobs:
         with:
           context: ./frontend
           file: ./frontend/Dockerfile
-          push: false # Dry-run only, don't push to registry during test
+          push: false
           tags: insightnote-frontend:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
